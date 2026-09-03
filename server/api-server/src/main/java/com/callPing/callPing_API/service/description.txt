@@ -1,0 +1,9 @@
+[Service (Business Logic) 계층]
+애플리케이션의 핵심 비즈니스 로직을 수행하는 곳.
+Controller로부터 전달받은 데이터를 검증하거나 가공하며, 필요한 경우 Repository를 호출하여 데이터베이스 작업을 수행함. 또한 데이터베이스 트랜잭션을 관리
+
+Redis 가동(Background)
+redis-server --daemonize yes
+
+Redis shoutdown
+redis-cli shutdown
