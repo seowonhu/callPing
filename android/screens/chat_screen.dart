@@ -1,11 +1,6 @@
 import 'dart:convert';
-import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
-
-// 서버 기본 주소
-const String BASE_URL = 'http://54.116.93.220:8080';
+import 'api_service.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -17,29 +12,18 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
 
-  // 화면에 띄울 메시지 리스트
   final List<Map<String, dynamic>> _messages = [];
   bool _isWaiting = false;
 
-  // 현재 활성화된 방 번호 (서버가 줌)
   int? _currentRoomId;
 
   @override
   void initState() {
     super.initState();
-    // 앱 켜면 빈 채팅방 생성
     _startNewRoom();
   }
 
-  // 임시 토큰 발급 함수 (나중에 로그인 연동 시 수정)
-  Future<String> _getToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    // 실제로는 prefs.getString('access_token') 등을 가져옴
-    // 지금은 테스트용 가짜 토큰을 넣거나 비워둠
-    return prefs.getString('access_token') ?? "임시_토큰_값";
-  }
-
-  // [API] 1. 새 채팅방 생성 (POST /chats/rooms)
+  // [API] 1. 새 채팅방 생성 (ApiService 연동)
   Future<void> _startNewRoom() async {
     setState(() {
       _messages.clear();
@@ -47,42 +31,43 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
-      String token = await _getToken();
-      final response = await http
-          .post(
-            Uri.parse('$BASE_URL/chats/rooms'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $token',
-            },
-          )
-          .timeout(const Duration(seconds: 10));
+      print("서버로 새 채팅방 생성 요청 보냄");
+      final response = await ApiService.createChatRoom().timeout(
+        const Duration(seconds: 10),
+      );
+
+      print("채팅방 생성 응답 코드: ${response.statusCode}");
+      print("채팅방 생성 응답 데이터: ${utf8.decode(response.bodyBytes)}");
 
       if (response.statusCode == 201) {
-        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        final responseData = jsonDecode(utf8.decode(response.bodyBytes));
         setState(() {
-          _currentRoomId = data['roomId']; // 서버가 준 방 번호 저장
+          // 명세서 규칙 적용: 'data' 안의 'room_id' 꺼내기
+          _currentRoomId = responseData['data']['room_id'];
+          print("채팅방 생성 성공! 발급받은 방 번호: $_currentRoomId");
         });
+      } else {
+        print("채팅방 생성 실패: 서버가 정상 코드(201)를 주지 않았습니다.");
       }
     } catch (e) {
       print("채팅방 생성 에러: $e");
     } finally {
-      setState(() {
-        _isWaiting = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isWaiting = false;
+        });
+      }
     }
   }
 
-  // [API] 2. 질문하기 (POST /chats)
+  // [API] 2. 질문하기 (ApiService 연동)
   Future<void> _sendMessage() async {
-    // 빈칸이거나 로딩 중이면 무시
     if (_messageController.text.trim().isEmpty || _isWaiting) return;
 
-    // 방 번호가 없으면 사용자에게 에러 팝업
     if (_currentRoomId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('서버 연결 실패: 가짜 토큰이거나 서버가 닫혀있어 방을 만들지 못했습니다.'),
+          content: Text('서버 연결 실패: 채팅방 번호를 받아오지 못했습니다.'),
           backgroundColor: Colors.red,
         ),
       );
@@ -90,7 +75,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     String text = _messageController.text;
-    int requestedRoomId = _currentRoomId!; // 답변 꼬임 방지를 위한 꼬리표
+    int requestedRoomId = _currentRoomId!;
 
     setState(() {
       _messages.add({'text': text, 'isUser': true});
@@ -101,23 +86,20 @@ class _ChatScreenState extends State<ChatScreen> {
     String aiAnswer = "";
 
     try {
-      String token = await _getToken();
+      print("서버로 메시지 전송 요청 보냄 (방 번호: $requestedRoomId, 질문: $text)");
 
-      // 서버로 DTO 양식(roomId, question)에 맞춰 전송
-      final response = await http
-          .post(
-            Uri.parse('$BASE_URL/chats'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $token',
-            },
-            body: jsonEncode({'roomId': requestedRoomId, 'question': text}),
-          )
-          .timeout(const Duration(seconds: 60)); // 60초 타임아웃
+      final response = await ApiService.sendChat(
+        requestedRoomId,
+        text,
+      ).timeout(const Duration(seconds: 60));
+
+      print("메시지 전송 응답 코드 : ${response.statusCode}");
+      print("메시지 전송 응답 데이터: ${utf8.decode(response.bodyBytes)}");
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(utf8.decode(response.bodyBytes));
-        aiAnswer = data['answer']; // DTO 명세서에 따른 'answer'
+        final responseData = jsonDecode(utf8.decode(response.bodyBytes));
+        // 명세서 규칙 적용: 'data' 포장지 안의 'answer' 꺼내기
+        aiAnswer = responseData['data']['answer'];
       } else {
         aiAnswer = '서버 응답 오류 (코드: ${response.statusCode})';
       }
@@ -126,8 +108,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     if (mounted) {
-      // 답변이 왔을 때, 사용자가 방을 안 옮기고 기다렸다면 화면에 띄움
-      // 방을 옮겼다면, 백엔드 DB에 이미 저장됐으니 화면에 띄울 필요 없음
       if (_currentRoomId == requestedRoomId) {
         setState(() {
           _messages.add({'text': aiAnswer, 'isUser': false});
@@ -145,33 +125,27 @@ class _ChatScreenState extends State<ChatScreen> {
         _messages.removeLast();
       }
     });
-    // TODO: (선택) API 3번 - 서버에 중단 요청(ChatStopRequestDTO)을 보내는 로직을 추가할 수 있음
   }
 
-  // [API] 특정 방의 과거 대화 불러오기 (GET /chats/rooms/{roomId})
+  // [API] 특정 방의 과거 대화 불러오기 (ApiService 연동)
   Future<void> _loadRoomDetail(int roomId) async {
     setState(() {
       _messages.clear();
       _isWaiting = true;
-      _currentRoomId = roomId; // 현재 방 번호 변경
+      _currentRoomId = roomId;
     });
 
     try {
-      String token = await _getToken();
-      final response = await http
-          .get(
-            Uri.parse('$BASE_URL/chats/rooms/$roomId'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $token',
-            },
-          )
-          .timeout(const Duration(seconds: 10));
+      final response = await ApiService.getChatRoomDetail(
+        roomId,
+      ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(utf8.decode(response.bodyBytes));
+        final responseData = jsonDecode(utf8.decode(response.bodyBytes));
+        // 명세서 규칙 적용: 'data' 포장지가 리스트
+        final List<dynamic> data = responseData['data'];
+
         setState(() {
-          // 서버가 준 질문/답변 목록을 말풍선 리스트에 넣음
           for (var item in data) {
             _messages.add({'text': item['question'], 'isUser': true});
             _messages.add({'text': item['answer'], 'isUser': false});
@@ -181,9 +155,11 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (e) {
       print("채팅방 조회 에러: $e");
     } finally {
-      setState(() {
-        _isWaiting = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isWaiting = false;
+        });
+      }
     }
   }
 
@@ -206,7 +182,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 onTap: () {
                   Navigator.pop(context);
-                  _startNewRoom(); // 새 채팅방을 서버에 요청
+                  _startNewRoom();
                 },
               ),
               ListTile(
@@ -218,7 +194,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 onTap: () async {
                   Navigator.pop(context);
 
-                  // 라이브러리 화면으로 이동
                   final selectedRoomId = await Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -226,9 +201,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   );
 
-                  // 사용자가 방을 선택해서 돌아왔다면
                   if (selectedRoomId != null && selectedRoomId is int) {
-                    _loadRoomDetail(selectedRoomId); // 서버에서 과거 대화 내역 받아옴
+                    _loadRoomDetail(selectedRoomId);
                   }
                 },
               ),
@@ -386,7 +360,7 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 // =============================================================
-// 라이브러리(채팅 내역) 화면 - 서버에서 불러옴
+// 라이브러리(채팅 내역) 화면
 // =============================================================
 class ChatLibraryScreen extends StatefulWidget {
   const ChatLibraryScreen({super.key});
@@ -405,55 +379,68 @@ class _ChatLibraryScreenState extends State<ChatLibraryScreen> {
     _fetchRooms();
   }
 
-  // 임시 토큰
-  Future<String> _getToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('access_token') ?? "임시_토큰_값";
-  }
-
-  // [API] 과거 방 목록 불러오기 (GET /chats/rooms)
+  // [API] 과거 방 목록 불러오기 (ApiService 연동)
   Future<void> _fetchRooms() async {
     try {
-      String token = await _getToken();
-      final response = await http.get(
-        Uri.parse('$BASE_URL/chats/rooms'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      );
+      final response = await ApiService.getChatRooms();
 
       if (response.statusCode == 200) {
+        // 1. 정상적으로 목록을 불러왔을 때
+        final responseData = jsonDecode(utf8.decode(response.bodyBytes));
         setState(() {
-          _roomList = jsonDecode(utf8.decode(response.bodyBytes));
+          // 명세서 규칙 적용
+          _roomList = responseData['data'];
           _isLoading = false;
         });
+      } else if (response.statusCode == 404) {
+        // 2. 대화 내역이 없을 때 (404 반환)
+        setState(() {
+          _roomList = []; // 빈 목록으로 초기화
+          _isLoading = false; // 로딩 끄기
+        });
+      } else {
+        // 3. 그 외 서버 에러(500 등) 발생
+        if (mounted) {
+          setState(() {
+            _isLoading = false; // 로딩 끔
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('목록을 불러오는 중 오류 발생 (코드: ${response.statusCode})'),
+            ),
+          );
+        }
       }
     } catch (e) {
-      setState(() => _isLoading = false);
+      // 4. 네트워크 오류 등 예외 발생
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
-  // [API] 방 삭제 (DELETE /chats/rooms/{roomId})
+  // [API] 방 삭제 (ApiService 연동)
   Future<void> _deleteRoom(int roomId, int index) async {
     setState(() {
-      _roomList.removeAt(index); // 화면에서 즉시 지움
+      _roomList.removeAt(index);
     });
 
     try {
-      String token = await _getToken();
-      await http.delete(
-        Uri.parse('$BASE_URL/chats/rooms/$roomId'),
-        headers: {'Authorization': 'Bearer $token'},
-      );
+      await ApiService.deleteChatRoom(roomId);
     } catch (e) {
       print("삭제 에러");
     }
   }
 
-  String _formatDate(String isoString) {
-    DateTime date = DateTime.parse(isoString).toLocal();
-    return '${date.month}월 ${date.day}일';
+  String _formatDate(String? isoString) {
+    if (isoString == null || isoString.isEmpty) return '날짜 없음';
+    try {
+      DateTime date = DateTime.parse(isoString).toLocal();
+      return '${date.month}월 ${date.day}일';
+    } catch (e) {
+      ("날짜 변환 에러: $e");
+      return '날짜 오류';
+    }
   }
 
   @override
@@ -496,14 +483,26 @@ class _ChatLibraryScreenState extends State<ChatLibraryScreen> {
                       Expanded(
                         child: InkWell(
                           onTap: () {
-                            // 방을 클릭하면, 서버의 roomId를 들고 돌아감
-                            Navigator.pop(context, room['roomId']);
+                            int? clickedId = room['room_id'] ?? room['roomId'];
+                            print("선택된 방 번호: $clickedId"); // 확인용 로그
+
+                            // 명세서 규칙 적용: 'room_id'
+                            if (clickedId != null) {
+                              Navigator.pop(context, clickedId);
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('에러: 방 번호를 찾을 수 없습니다.'),
+                                ),
+                              );
+                            }
                           },
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                _formatDate(room['createdAt']),
+                                // 명세서 규칙 적용: 'created_at'
+                                _formatDate(room['created_at']),
                                 style: const TextStyle(
                                   color: Color(0xFFA3A0A0),
                                   fontSize: 14,
@@ -512,7 +511,7 @@ class _ChatLibraryScreenState extends State<ChatLibraryScreen> {
                               ),
                               const SizedBox(height: 8),
                               Text(
-                                room['title'],
+                                room['title'] ?? '새로운 대화',
                                 style: const TextStyle(
                                   color: Colors.black,
                                   fontSize: 16,
@@ -528,7 +527,8 @@ class _ChatLibraryScreenState extends State<ChatLibraryScreen> {
                           Icons.delete_outline,
                           color: Colors.black54,
                         ),
-                        onPressed: () => _deleteRoom(room['roomId'], index),
+                        // 명세서 규칙 적용: 'room_id'
+                        onPressed: () => _deleteRoom(room['room_id'], index),
                       ),
                     ],
                   ),

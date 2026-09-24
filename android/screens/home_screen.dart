@@ -6,86 +6,121 @@ import 'settings_screen.dart'; // 설정 화면
 import 'guide_screen.dart'; // 통화 가이드 화면
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final int initialIndex;
+  const HomeScreen({super.key, this.initialIndex = 0});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int _selectedIndex = 0;
+  late int _selectedIndex;
+
+  // ⭐️ 1번 탭 안에서만 화면이 이동하도록 잡아주는 전용 네비게이터 키
+  final GlobalKey<NavigatorState> _homeNavKey = GlobalKey<NavigatorState>();
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedIndex = widget.initialIndex;
+  }
 
   @override
   Widget build(BuildContext context) {
     final List<Widget> pages = [
-      _buildMainTab(),
-      const ChatScreen(), // (채팅 화면 위젯 이름에 맞춰 수정하세요)
+      // ⭐️ 1번 탭(콜핑)을 Navigator로 감싸서 하단 바가 가려지지 않게 보호합니다.
+      Navigator(
+        key: _homeNavKey,
+        onGenerateRoute: (settings) {
+          return MaterialPageRoute(
+            // ⭐️ 주의: navContext를 전달해야 하단 바 안에서만 화면이 바뀝니다!
+            builder: (navContext) => _buildMainTab(navContext),
+          );
+        },
+      ),
+      const ChatScreen(),
       const AnalyticsScreen(),
       const SettingsScreen(),
     ];
 
-    return Scaffold(
-      backgroundColor: Colors.white,
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        onTap: (index) => setState(() => _selectedIndex = index),
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: const Color(0xFF1A9000),
-        unselectedItemColor: Colors.black,
-        items: [
-          BottomNavigationBarItem(
-            icon: Image.asset(
-              'assets/home.png',
-              width: 24,
-              height: 24,
-              color: _selectedIndex == 0
-                  ? const Color(0xFF1A9000)
-                  : Colors.black,
+    // 안드로이드 뒤로가기 버튼 눌렀을 때 앱이 바로 안 꺼지게 막아주는 기능
+    return WillPopScope(
+      onWillPop: () async {
+        // 홈 탭 안에서 통화 가이드 등에 들어가 있다면, 그 화면만 뒤로가기
+        if (_selectedIndex == 0 && _homeNavKey.currentState?.canPop() == true) {
+          _homeNavKey.currentState?.pop();
+          return false;
+        }
+        return true;
+      },
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        bottomNavigationBar: BottomNavigationBar(
+          currentIndex: _selectedIndex,
+          onTap: (index) {
+            // 이미 보고 있는 홈 탭을 한 번 더 누르면 첫 화면으로 싹 정리해주는 기능
+            if (index == _selectedIndex && index == 0) {
+              _homeNavKey.currentState?.popUntil((route) => route.isFirst);
+            }
+            setState(() => _selectedIndex = index);
+          },
+          type: BottomNavigationBarType.fixed,
+          selectedItemColor: const Color(0xFF1A9000),
+          unselectedItemColor: Colors.black,
+          items: [
+            BottomNavigationBarItem(
+              icon: Image.asset(
+                'assets/home.png',
+                width: 24,
+                height: 24,
+                color: _selectedIndex == 0
+                    ? const Color(0xFF1A9000)
+                    : Colors.black,
+              ),
+              label: '콜핑',
             ),
-            label: '콜핑',
-          ),
-          BottomNavigationBarItem(
-            icon: Image.asset(
-              'assets/chat.png',
-              width: 24,
-              height: 24,
-              color: _selectedIndex == 1
-                  ? const Color(0xFF1A9000)
-                  : Colors.black,
+            BottomNavigationBarItem(
+              icon: Image.asset(
+                'assets/chat.png',
+                width: 24,
+                height: 24,
+                color: _selectedIndex == 1
+                    ? const Color(0xFF1A9000)
+                    : Colors.black,
+              ),
+              label: '챗봇',
             ),
-            label: '챗봇',
-          ),
-          BottomNavigationBarItem(
-            icon: Image.asset(
-              'assets/analytic.png',
-              width: 24,
-              height: 24,
-              color: _selectedIndex == 2
-                  ? const Color(0xFF1A9000)
-                  : Colors.black,
+            BottomNavigationBarItem(
+              icon: Image.asset(
+                'assets/analytic.png',
+                width: 24,
+                height: 24,
+                color: _selectedIndex == 2
+                    ? const Color(0xFF1A9000)
+                    : Colors.black,
+              ),
+              label: '분석',
             ),
-            label: '분석',
-          ),
-          BottomNavigationBarItem(
-            icon: Image.asset(
-              'assets/setting.png',
-              width: 24,
-              height: 24,
-              color: _selectedIndex == 3
-                  ? const Color(0xFF1A9000)
-                  : Colors.black,
+            BottomNavigationBarItem(
+              icon: Image.asset(
+                'assets/setting.png',
+                width: 24,
+                height: 24,
+                color: _selectedIndex == 3
+                    ? const Color(0xFF1A9000)
+                    : Colors.black,
+              ),
+              label: '설정',
             ),
-            label: '설정',
-          ),
-        ],
+          ],
+        ),
+        body: IndexedStack(index: _selectedIndex, children: pages),
       ),
-      // IndexedStack 유지 (탭 이동 시 상태 보존)
-      body: IndexedStack(index: _selectedIndex, children: pages),
     );
   }
 
-  // 0번 탭: 메인 화면 구성
-  Widget _buildMainTab() {
+  // 0번 탭: 메인 화면 구성 (navContext를 받아옵니다)
+  Widget _buildMainTab(BuildContext navContext) {
     return SafeArea(
       child: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
@@ -93,12 +128,12 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const SizedBox(height: 10),
-            Center(child: InlineChecklistBox()), // (기존에 만드신 체크리스트 박스)
+            Center(child: InlineChecklistBox()),
             const SizedBox(height: 55),
 
             _buildMenuButton('통화 가이드', () {
               Navigator.push(
-                context,
+                navContext, // ⭐️ 전체 context가 아닌 내부 navContext 사용!
                 MaterialPageRoute(
                   builder: (context) => const GuideInputScreen(),
                 ),
@@ -108,7 +143,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
             _buildMenuButton('대본 보관함', () {
               Navigator.push(
-                context,
+                navContext, // ⭐️ 전체 context가 아닌 내부 navContext 사용!
                 MaterialPageRoute(
                   builder: (context) => const ScriptLibraryScreen(),
                 ),
@@ -153,11 +188,11 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 // ============================================================================
-// 피그마 디자인을 반영한 인라인 편집
+// 피그마 디자인을 반영한 인라인 편집 (기존 코드 그대로 유지)
 // ============================================================================
 
 int _currentIndex = -1;
-int _previousIndex = -1; // 내가 원래 보던 체크리스트 글의 번호를 임시로 기억해 둘 변수
+int _previousIndex = -1;
 int _currentPage = 0;
 
 class InlineChecklistBox extends StatefulWidget {
@@ -171,7 +206,6 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
   int _currentIndex = -1;
   int _currentPage = 0;
 
-  // 각 4개의 칸을 직접 통제하기 위해 컨트롤러를 4개씩 둠
   final TextEditingController _targetController = TextEditingController();
   final List<TextEditingController> _titleControllers = List.generate(
     4,
@@ -183,7 +217,6 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
   );
   List<bool> _isDones = [false, false, false, false];
 
-  // 모든 빈칸 초기화 (새로 만들 때)
   void _clearFields() {
     _targetController.clear();
     for (int i = 0; i < 4; i++) {
@@ -193,7 +226,6 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
     }
   }
 
-  // 빈칸 채우기 (목록에서 눌렀을 때)
   void _loadChecklist(int index) {
     _currentIndex = index;
     _targetController.text = _savedChecklists[index]['target'];
@@ -234,7 +266,6 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
     );
   }
 
-  // [상태 0] 빈 화면
   Widget _buildStep0Empty() {
     return GestureDetector(
       onTap: () => setState(() {
@@ -266,20 +297,15 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
     );
   }
 
-  // --------------------------------------------------
-  // [체크리스트 상태 1] 입력 화면
-  // --------------------------------------------------
   Widget _buildStep1Editing() {
     return Row(
       children: [
-        // 왼쪽 구역: 제목 입력칸 + 취소/저장 버튼
         Expanded(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12.0),
             child: Column(
               children: [
-                const SizedBox(height: 30), // 위쪽 여백 (아이콘 자리 비워둠)
-                // 중앙에 제목 입력칸
+                const SizedBox(height: 30),
                 Expanded(
                   child: Center(
                     child: TextField(
@@ -297,27 +323,20 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
                     ),
                   ),
                 ),
-                // 하단 취소/저장 버튼
                 Row(
                   children: [
-                    // 취소 버튼
                     Expanded(
                       child: ElevatedButton(
                         onPressed: () => setState(() {
-                          // 1. 기존 글 수정 중 -> 그 글 내용으로 되돌리고 뷰어(2)로 복귀
                           if (_currentIndex != -1) {
                             _loadChecklist(_currentIndex);
-                            _step = 2; // 뷰어로 복귀
-                          }
-                          // 2. 새로 만드려다가 취소
-                          else {
+                            _step = 2;
+                          } else {
                             if (_previousIndex != -1) {
-                              // 1. 기존에 보던 체크리스트가 있었다면 -> 그 체크리스트 내용으로 되돌리고 뷰어(2)로 복귀
                               _loadChecklist(_previousIndex);
                               _step = 2;
                               _previousIndex = -1;
                             } else {
-                              // 3. 저장된 게 하나도 없는 최초 상태였다면? -> 빈 화면(0)으로
                               _step = _savedChecklists.isEmpty ? 0 : 2;
                             }
                           }
@@ -333,12 +352,10 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
                         ),
                       ),
                     ),
-
                     const SizedBox(width: 4),
                     Expanded(
                       child: ElevatedButton(
                         onPressed: () {
-                          // 저장 로직!
                           List<Map<String, dynamic>> newTasks = [];
                           for (int i = 0; i < 4; i++) {
                             if (_titleControllers[i].text.isNotEmpty) {
@@ -369,7 +386,7 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
                             } else {
                               _savedChecklists[_currentIndex] = newData;
                             }
-                            _step = 2; // 뷰어로 이동
+                            _step = 2;
                           });
                         },
                         style: ElevatedButton.styleFrom(
@@ -390,7 +407,6 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
             ),
           ),
         ),
-
         SizedBox(
           width: 150,
           child: Column(
@@ -403,13 +419,9 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
     );
   }
 
-  // --------------------------------------------------
-  // [체크리스트 상태 2] 뷰어 화면 (가운데 정렬 적용)
-  // --------------------------------------------------
   Widget _buildStep2Saved() {
     return Row(
       children: [
-        // 왼쪽 구역: 3개 아이콘 + 중앙 대상 이름 (기존 동일)
         Expanded(
           child: Column(
             children: [
@@ -419,15 +431,13 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
                   children: [
                     GestureDetector(
                       onTap: () => setState(() {
-                        // 만약 현재 보고 있는 글(_currentIndxt)이 있다면, 그 글이 몇 번째인지 찾아서 페이지 계산
                         if (_currentIndex != -1) {
                           const int itemsPerPage = 3;
-                          _currentPage = (_currentIndex / itemsPerPage)
-                              .floor(); // 0번 ~ 2번은 0페이지, 3번 ~ 5번은 1페이지
+                          _currentPage = (_currentIndex / itemsPerPage).floor();
                         } else {
-                          _currentPage = 0; // 현재 보고 있는 글이 없으면 그냥 0페이지
+                          _currentPage = 0;
                         }
-                        _step = 3; // 목록 화면으로 이동
+                        _step = 3;
                       }),
                       child: Image.asset(
                         'assets/list_checklist.png',
@@ -466,8 +476,7 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
                           return;
                         }
                         setState(() {
-                          _previousIndex =
-                              _currentIndex; // 내가 원래 보던 체크리스트 글의 번호를 임시로 기억해 둠
+                          _previousIndex = _currentIndex;
                           _currentIndex = -1;
                           _clearFields();
                           _step = 1;
@@ -503,21 +512,16 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
             ],
           ),
         ),
-
-        // 오른쪽 구역: 작성된 내용만 모아서 세로로 가운데 정렬
         SizedBox(
           width: 150,
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center, // 개수에 상관없이 정중앙으로 모음
+            mainAxisAlignment: MainAxisAlignment.center,
             children: List.generate(4, (index) {
-              // 아무것도 안 적은 빈칸은 아예 공간조차 차지하지 않게
               if (_titleControllers[index].text.isEmpty)
                 return const SizedBox.shrink();
 
               return Padding(
-                padding: const EdgeInsets.symmetric(
-                  vertical: 4.0,
-                ), // 블록들 사이의 위아래 틈새 간격
+                padding: const EdgeInsets.symmetric(vertical: 4.0),
                 child: _buildViewTaskSlot(index),
               );
             }),
@@ -528,7 +532,6 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
     );
   }
 
-  // 편집 화면용 빈칸 슬롯 (입력하는 곳)
   Widget _buildEditTaskSlot(int index) {
     return Container(
       width: 150,
@@ -550,7 +553,7 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
               color: Colors.grey.shade200,
               borderRadius: BorderRadius.circular(4),
             ),
-          ), // 가짜 체크박스
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
@@ -601,10 +604,8 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
     );
   }
 
-  // 뷰어 화면용 결과물 슬롯 (빈칸 방지 처리)
   Widget _buildViewTaskSlot(int index) {
-    if (_titleControllers[index].text.isEmpty)
-      return const SizedBox.shrink(); // 안전장치 한 번 더
+    if (_titleControllers[index].text.isEmpty) return const SizedBox.shrink();
 
     return GestureDetector(
       onTap: () {
@@ -679,9 +680,6 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
     );
   }
 
-  // --------------------------------------------------
-  // [체크리스트 상태 3] 전체 목록 화면 (페이지네이션 + 삭제 확인 팝업)
-  // --------------------------------------------------
   Widget _buildStep3ListView() {
     const int itemsPerPage = 3;
     int totalPages = (_savedChecklists.isEmpty)
@@ -703,16 +701,15 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
           child: IconButton(
             icon: const Icon(Icons.close, color: Colors.black),
             onPressed: () => setState(() {
-              // 안전장치: X를 눌러서 닫을 때, 데이터는 있는데 _currentIndex가 꼬였다면 첫 번째 항목을 띄움
               if (_savedChecklists.isNotEmpty) {
                 if (_currentIndex == -1 ||
                     _currentIndex >= _savedChecklists.length) {
                   _loadChecklist(0);
                 }
-                _step = 2; // 뷰어 화면으로 복귀
+                _step = 2;
               } else {
                 _currentIndex = -1;
-                _step = 0; // 데이터 없을 때만 빈 화면으로
+                _step = 0;
               }
             }),
           ),
@@ -728,7 +725,6 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
                     height: 50,
                     child: Stack(
                       children: [
-                        // 1. 배경 (상세 보기)
                         Positioned.fill(
                           child: GestureDetector(
                             behavior: HitTestBehavior.opaque,
@@ -738,8 +734,6 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
                             }),
                           ),
                         ),
-
-                        // 2. 글씨 (대상 이름)
                         Center(
                           child: IgnorePointer(
                             child: Text(
@@ -752,8 +746,6 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
                             ),
                           ),
                         ),
-
-                        // 3. 휴지통 아이콘 (삭제 확인 팝업 추가)
                         Positioned(
                           right: 32,
                           top: 0,
@@ -761,7 +753,6 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
                           child: Center(
                             child: GestureDetector(
                               onTap: () {
-                                // 휴지통을 누르면 팝업창을 띄우고 인덱스 꼬임 방어
                                 showDialog(
                                   context: context,
                                   builder: (BuildContext ctx) {
@@ -780,7 +771,6 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
                                         '이 체크리스트를 정말 삭제하시겠습니까?',
                                       ),
                                       actions: [
-                                        // 취소 버튼
                                         TextButton(
                                           onPressed: () =>
                                               Navigator.of(ctx).pop(),
@@ -792,23 +782,17 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
                                             ),
                                           ),
                                         ),
-                                        // 삭제 버튼
                                         TextButton(
                                           onPressed: () {
-                                            Navigator.of(ctx).pop(); // 팝업 닫기
-
+                                            Navigator.of(ctx).pop();
                                             setState(() {
-                                              // 1. 해당 체크리스트 삭제
                                               _savedChecklists.removeAt(
                                                 realIndex,
                                               );
-
-                                              // 2. 비어있을 경우
                                               if (_savedChecklists.isEmpty) {
                                                 _currentIndex = -1;
                                                 _step = 0;
                                               } else {
-                                                // 3. 인덱스 꼬임 방지 및 페이지 유지 로직
                                                 int newTotalPages =
                                                     (_savedChecklists.length /
                                                             itemsPerPage)
@@ -818,8 +802,6 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
                                                   _currentPage =
                                                       newTotalPages - 1;
                                                 }
-
-                                                // 만약 내가 방금 지운 게 지금 화면에 띄워져 있던 거라면, _currentIndex 번호만 초기화(-1)
                                                 if (_currentIndex ==
                                                     realIndex) {
                                                   _currentIndex = -1;
@@ -843,7 +825,6 @@ class _InlineChecklistBoxState extends State<InlineChecklistBox> {
                                   },
                                 );
                               },
-
                               child: Image.asset(
                                 'assets/delete_checklist.png',
                                 width: 25,

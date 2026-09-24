@@ -1,6 +1,9 @@
 import 'dart:ui';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'api_service.dart';
+import 'feedback_result_screen.dart';
 
 class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({super.key});
@@ -9,56 +12,95 @@ class AnalyticsScreen extends StatefulWidget {
   State<AnalyticsScreen> createState() => _AnalyticsScreenState();
 }
 
-class _AnalyticsScreenState extends State<AnalyticsScreen> {
+class _AnalyticsScreenState extends State<AnalyticsScreen>
+    with AutomaticKeepAliveClientMixin {
+  // 탭 이동해도 캐시 유지되도록
+  @override
+  bool get wantKeepAlive => true;
+
   List<Map<String, dynamic>> _uploadedFiles = [];
 
+  // 화면이 리빌드되어도 캐시 지워지지 않도록
+  final Map<int, dynamic> _globalAnalysisCache = {};
+
   Future<void> _pickAudioFile() async {
+    // 서버나 로컬에 저장된 권한 상태 확인
+    // 실제로는 GET/users/me/permissions의 file_upload_permission 응답값을 사용하거나 전역 변수 참조
+    bool hasUploadPermission = true;
+
+    if (!hasUploadPermission) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('설정에서 파일 업로드 권한을 허용해주세요.')));
+      return; // 권한 꺼져있으면 함수 강제 종료 (파일 탐색기 차단)
+    }
+
+    // 권한 켜져 있을 때만 코드 실행
     FilePickerResult? result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['m4a', 'mp3', 'wav', 'aac', 'flac'],
     );
 
-    if (result != null) {
+    if (result != null && result.files.first.path != null) {
+      String filePath = result.files.first.path!;
       String fileName = result.files.first.name;
 
+      // 화면에 '업로드 중' 상태로 파일 항목 먼저 추가
       Map<String, dynamic> newFile = {
+        'record_id': null, // 실제 서버 연동 시 백엔드에서 받아온 ID 사용
         'fileName': fileName,
         'relation': '',
         'summary': '',
         'uploadDate': DateTime.now().toIso8601String(),
         'fileSize': result.files.first.size.toString(),
         'status': 'uploading',
-        'progress': 0.0,
+        'progress': null, // 업로드 진행률 표시용
+        'cached_analysis': null, // 캐시 저장소 명시적 초기화
       };
 
       setState(() {
         _uploadedFiles.add(newFile);
       });
 
-      // 1. '업로드 중' 시뮬레이션
-      for (int i = 1; i <= 100; i += 5) {
-        await Future.delayed(const Duration(milliseconds: 100));
+      try {
+        // 실제 백엔드 API 연동(파일 전송)
+        final response = await ApiService.uploadAudio(filePath);
+
+        // 서버 응답 확인을 위한 디버그 로그
+        final responseString = await response.stream.bytesToString();
+        print("파일 업로드 서버 응답 코드: ${response.statusCode}");
+        print("파일 업로드 서버 응답 데이터: $responseString");
+
+        if (response.statusCode == 201) {
+          // 전송 성공 시 서버 응답 해독
+          final responseString = await response.stream.bytesToString();
+          final responseData = jsonDecode(responseString);
+
+          // 서버가 파일 받고 발급해 준 record_id
+          int realRecordId = responseData['data']['record_id'];
+
+          if (mounted) {
+            setState(() {
+              newFile['record_id'] = realRecordId;
+              newFile['status'] = 'completed'; // 분석 완료 상태로 즉시 갱신 (추후 폴링 필요)
+              newFile['progress'] = 1.0;
+            });
+          }
+        } else {
+          // 400, 500 등 에러 발생
+          if (mounted) {
+            setState(() {
+              newFile['status'] = 'error';
+            });
+          }
+        }
+      } catch (e) {
+        // 네트워크 통신 실패
         if (mounted) {
           setState(() {
-            newFile['progress'] = i / 100.0;
+            newFile['status'] = 'error';
           });
         }
-      }
-
-      // 2. '분석 중' 시뮬레이션
-      if (mounted) {
-        setState(() {
-          newFile['status'] = 'analyzing';
-        });
-      }
-      await Future.delayed(const Duration(seconds: 3));
-
-      // 3. 시뮬레이션 완료 처리
-      // 추후에 실제 서버 연동 시, 서버에서 에러 응답이 오면 이 부분을 newFile['status'] = 'error'; 로 바꿔주면 됨
-      if (mounted) {
-        setState(() {
-          newFile['status'] = 'completed';
-        });
       }
     }
   }
@@ -69,8 +111,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024)
+    if (bytes < 1024 * 1024 * 1024) {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
@@ -117,7 +160,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const SizedBox(height: 10),
-
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
@@ -168,9 +210,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                           ],
                         ),
                       ),
-
                       const SizedBox(height: 30),
-
                       const Text(
                         '2. 관계',
                         style: TextStyle(
@@ -189,9 +229,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         style: const TextStyle(fontSize: 14),
                       ),
                       const Divider(color: Colors.black38),
-
                       const SizedBox(height: 30),
-
                       const Text(
                         '3. 내용 요약',
                         style: TextStyle(
@@ -211,7 +249,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       ),
                     ],
                   ),
-
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
@@ -424,7 +461,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     ] else ...[
                       const SizedBox(width: 12),
                     ],
-
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.center,
@@ -459,7 +495,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       ),
                     ),
                     const SizedBox(width: 8),
-
                     if (status == 'uploading') ...[
                       Text(
                         '${(progress * 100).toInt()}%',
@@ -500,70 +535,122 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                    ] else if (status == 'error') ...[
-                      // 에러 UI 코드는 보관되어 있으니 나중에 서버 연결 시 사용
-                      InkWell(
-                        onTap: () {
-                          showDialog(
-                            context: context,
-                            builder: (ctx) => AlertDialog(
-                              title: const Text(
-                                '⚠️ 인식 불가',
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                              content: const Text(
-                                '통화 내용이 감지되지 않았습니다.\n음악 파일이나 무음 파일인지 확인해 주세요.',
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(ctx),
-                                  child: const Text(
-                                    '확인',
-                                    style: TextStyle(color: Colors.black),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10.0,
-                            vertical: 6.0,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFFEBEE),
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(color: Colors.red.shade200),
-                          ),
-                          child: const Row(
-                            children: [
-                              Icon(
-                                Icons.error_outline,
-                                color: Colors.red,
-                                size: 14,
-                              ),
-                              SizedBox(width: 4),
-                              Text(
-                                '분석 실패',
-                                style: TextStyle(
-                                  color: Colors.red,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
                     ] else ...[
                       InkWell(
-                        onTap: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('$displayFileName 피드백 준비 중!'),
+                        onTap: () async {
+                          // null 값 허용하는 int? 타입으로 수정
+                          int? recordId = _uploadedFiles[index]['record_id'];
+
+                          // ID 발급되지 않았다면(업로드 실패) 작동 중지 및 안내 띄우기
+                          if (recordId == null) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('서버 업로드에 실패한 파일입니다. 다시 업로드해주세요.'),
+                              ),
+                            );
+                            return;
+                          }
+
+                          // 캐시 저장소에 데이터 있는지 확인
+                          if (_globalAnalysisCache.containsKey(recordId)) {
+                            print("캐시된 분석 데이터가 존재합니다. (recordId: $recordId)");
+                            final data = _globalAnalysisCache[recordId]!;
+
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => FeedbackResultScreen(
+                                  fileName: displayFileName,
+                                  summary: data['summary'] ?? '요약 내용 없음',
+                                  expression:
+                                      data['expression'] ?? '표현 분석 내용 없음',
+                                  feedback: data['feedback'] ?? '개선 피드백 없음',
+                                  transcript: data['transcript'] ?? [],
+                                ),
+                              ),
+                            );
+                            return; // 캐시가 있으면 API 호출 없이 바로 화면 이동
+                          }
+
+                          // 저장된 데이터 없을 때(최초 1회) 분석 데이터 불러오는 동안 화면에 로딩 다이얼로그 띄우기
+                          showDialog(
+                            context: context,
+                            barrierDismissible: false, // 로딩 중 다른 곳 터치 방지
+                            builder: (context) => const Center(
+                              child: CircularProgressIndicator(
+                                color: Colors.black,
+                              ),
                             ),
                           );
+
+                          try {
+                            final response =
+                                await ApiService.getCallAnalysis(
+                                  recordId,
+                                ).timeout(
+                                  const Duration(seconds: 15),
+                                ); // 15초 무응답 시 강제 종료
+
+                            if (context.mounted)
+                              Navigator.pop(context); // 로딩창 닫기
+
+                            if (response.statusCode == 200) {
+                              final responseData = jsonDecode(
+                                utf8.decode(response.bodyBytes),
+                              );
+                              final data = responseData['data'];
+
+                              // 2. 분석 데이터가 존재하면 캐시에 저장 후 결과 화면으로 이동
+                              _globalAnalysisCache[recordId] = data; // 캐시에 저장
+
+                              if (context.mounted) {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => FeedbackResultScreen(
+                                      fileName: displayFileName,
+                                      summary: data['summary'] ?? '요약 내용 없음',
+                                      expression:
+                                          data['expression'] ?? '표현 분석 내용 없음',
+                                      feedback: data['feedback'] ?? '개선 피드백 없음',
+                                      transcript: data['transcript'] ?? [],
+                                    ),
+                                  ),
+                                );
+                              }
+                            } else {
+                              // 통신 실패(404) 시에도 빈 데이터를 캐시에 남김
+                              _globalAnalysisCache[recordId] = {};
+
+                              if (context.mounted) {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => FeedbackResultScreen(
+                                      fileName: displayFileName,
+                                    ),
+                                  ),
+                                );
+                              }
+                            }
+                          } catch (e) {
+                            // 3. 에러 나더라도 로딩창이 닫히지 않고 남아있는 현상 방지
+                            if (context.mounted) Navigator.pop(context);
+
+                            // 서버 꺼져서 에러 났을 때도 빈 데이터를 캐시에 남김
+                            _globalAnalysisCache[recordId] = {};
+
+                            if (context.mounted) {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => FeedbackResultScreen(
+                                    fileName: displayFileName,
+                                  ),
+                                ),
+                              );
+                            }
+                          }
                         },
                         child: Container(
                           padding: const EdgeInsets.symmetric(
@@ -585,76 +672,64 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         ),
                       ),
                     ],
-
-                    if (status != 'uploading' && status != 'analyzing') ...[
-                      SizedBox(
-                        width: 32,
-                        child: PopupMenuButton<String>(
-                          padding: EdgeInsets.zero,
-                          icon: const Icon(
-                            Icons.more_vert,
-                            color: Colors.black,
-                            size: 22,
-                          ),
-                          color: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            side: const BorderSide(
-                              color: Colors.black,
-                              width: 1,
-                            ),
-                          ),
-                          onSelected: (value) {
-                            if (value == 'edit') {
-                              _showEditDialog(index);
-                            } else if (value == 'delete') {
-                              setState(() => _uploadedFiles.removeAt(index));
-                            }
-                          },
-                          itemBuilder: (BuildContext context) => [
-                            const PopupMenuItem(
-                              value: 'edit',
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.edit,
-                                    size: 20,
-                                    color: Colors.black,
-                                  ),
-                                  SizedBox(width: 8),
-                                  Text(
-                                    '수정',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const PopupMenuItem(
-                              value: 'delete',
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.delete_outline,
-                                    size: 20,
-                                    color: Colors.red,
-                                  ),
-                                  SizedBox(width: 8),
-                                  Text(
-                                    '삭제',
-                                    style: TextStyle(
-                                      color: Colors.red,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
+                    SizedBox(
+                      width: 32,
+                      child: PopupMenuButton<String>(
+                        padding: EdgeInsets.zero,
+                        icon: const Icon(
+                          Icons.more_vert,
+                          color: Colors.black,
+                          size: 22,
                         ),
+                        color: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          side: const BorderSide(color: Colors.black, width: 1),
+                        ),
+                        onSelected: (value) {
+                          if (value == 'edit') {
+                            _showEditDialog(index);
+                          } else if (value == 'delete') {
+                            setState(() => _uploadedFiles.removeAt(index));
+                          }
+                        },
+                        itemBuilder: (BuildContext context) => [
+                          const PopupMenuItem(
+                            value: 'edit',
+                            child: Row(
+                              children: [
+                                Icon(Icons.edit, size: 20, color: Colors.black),
+                                SizedBox(width: 8),
+                                Text(
+                                  '수정',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'delete',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.delete_outline,
+                                  size: 20,
+                                  color: Colors.red,
+                                ),
+                                SizedBox(width: 8),
+                                Text(
+                                  '삭제',
+                                  style: TextStyle(
+                                    color: Colors.red,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ],
                 ),
               );

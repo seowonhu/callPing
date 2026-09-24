@@ -45,7 +45,7 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // ⭐️ ApiService를 통한 깔끔한 통신
+      // ApiService를 통한 통신
       final response = await ApiService.login(
         inputId,
         inputPassword,
@@ -56,17 +56,33 @@ class _LoginScreenState extends State<LoginScreen> {
 
         // 명세서에 따른 데이터 접근
         final data = responseData['data'];
-        if (data != null && data['refresh_token'] != null) {
-          String token = data['refresh_token']; // 임시로 리프레시 토큰을 액세스 토큰으로 사용
 
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('access_token', token);
+        if (data != null) {
+          String accessToken =
+              data['access_token'] ??
+              data['accessToken'] ??
+              data['refresh_token'] ??
+              '';
+          String refreshToken = data['refresh_token'] ?? '';
 
-          if (mounted) {
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(builder: (context) => const HomeScreen()),
-            );
+          if (accessToken.isNotEmpty) {
+            final prefs = await SharedPreferences.getInstance();
+
+            // 기기에 두 개의 토큰 저장
+            await prefs.setString('access_token', accessToken);
+            await prefs.setString('refresh_token', refreshToken);
+
+            print("정상적으로 저장된 Access 토큰 : $accessToken");
+            print("정상적으로 저장된 Refresh 토큰 : $refreshToken"); // 토큰 값 확인용 로그
+
+            if (mounted) {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => const HomeScreen()),
+              );
+            }
+          } else {
+            _showErrorPopup('로그인에 성공했으나 서버에서 토큰을 받지 못했습니다.');
           }
         }
       } else if (response.statusCode == 401) {
@@ -79,6 +95,7 @@ class _LoginScreenState extends State<LoginScreen> {
         _showErrorPopup('로그인에 실패했습니다.');
       }
     } catch (e) {
+      print("통신 에러: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('서버와 연결할 수 없습니다. 다시 시도해주세요.'),

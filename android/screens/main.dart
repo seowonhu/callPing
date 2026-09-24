@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 // 로그인 화면 파일 불러오는 코드
-import 'home_screen.dart';
+import 'login_screen.dart';
 
 void main() async {
+  // 앱 화면 켜기 전에 엔진부터 켜기 위함
   WidgetsFlutterBinding.ensureInitialized();
 
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.setString('access_token', 'mock_test_token_123');
-
+  // firebase
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const MyApp());
 }
 
@@ -19,11 +20,13 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
+      debugShowCheckedModeBanner: false, // 화면 오른쪽 위 거슬리는 'DEBUG' 빨간 띠 없애기
       title: 'CallPing', // 앱 이름
-      theme: ThemeData(scaffoldBackgroundColor: Colors.white),
-      // 앱 켜자마자 가장 먼저 띄울 화면
-      home: const HomeScreen(),
+      theme: ThemeData(
+        scaffoldBackgroundColor: Colors.white, // 앱 전체 기본 배경색은 하얀색
+      ),
+      // 앱 켜자마자 가장 먼저 띄울 화면 지정
+      home: const LoginScreen(),
     );
   }
 }
