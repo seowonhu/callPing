@@ -9,5 +9,6 @@ public record TranscriptSegmentDTO(
         Long transcriptId,
         String speaker,
         String timestampOffset,
-        String text
+        String text,
+        Integer orderIndex // 순서 확인 및 중간 삽입 위치 계산용
 ) {}
