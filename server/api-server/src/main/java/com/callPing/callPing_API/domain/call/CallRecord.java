@@ -38,6 +38,7 @@ public class CallRecord {
     // 1:N 관계
     @Builder.Default
     @OneToMany(mappedBy = "callRecord", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("orderIndex ASC")
     private List<CallTranscript> transcripts = new ArrayList<>();
 
     // 부모가 지워지면 자식(Todo)도 연쇄 삭제되도록 필드 선언

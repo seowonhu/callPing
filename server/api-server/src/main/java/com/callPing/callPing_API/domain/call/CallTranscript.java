@@ -23,9 +23,13 @@ public class CallTranscript {
     @Column(columnDefinition = "TEXT")
     private String text;
 
+    @Column(name = "order_index")
+    private Integer orderIndex;
+
     // 소프트 삭제
     @Column(nullable = false)
     private boolean isDeleted = false;
+
 
     // 수정 메서드
     public void updateText(String newText, String newSpeaker) {
