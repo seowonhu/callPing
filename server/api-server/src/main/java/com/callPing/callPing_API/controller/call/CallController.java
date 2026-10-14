@@ -154,7 +154,6 @@ public class CallController {
     ) {
         TranscriptSegmentDTO addedSegment = callService.addTranscript(recordId, request);
 
-        // 💡 status(200)와 path 값을 추가하여 5개의 인자를 모두 채워줍니다.
         return ResponseEntity.ok(ApiResponse.success(
                 200,
                 "CALL_TRANSCRIPT_ADDED",

@@ -10,6 +10,7 @@ import java.util.List;
  */
 public record CallAnalysisResponseDTO(
         Long recordId,
+        String recordTitle, // 분석 화면에서도 파일명을 타이틀로 쓸 수 있게 추가
         List<TranscriptSegmentDTO> transcript,
         String summary,
         String speakerResult,

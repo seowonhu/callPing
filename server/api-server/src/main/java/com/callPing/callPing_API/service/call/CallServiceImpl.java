@@ -102,6 +102,7 @@ public class CallServiceImpl implements CallService {
 
         return new CallAnalysisResponseDTO(
                 callRecord.getId(),
+                callRecord.getFileName(),
                 segments,               // 1. 기존 DTO에 있던 transcript 리스트
                 callRecord.getSummary(),    // 2. summary
                 "화자 분석 완료",          // 3. speakerResult (현재 AI 모델에 없으므로 임시 문자열)
@@ -154,7 +155,9 @@ public class CallServiceImpl implements CallService {
 
         String summary = "총 " + todos.size() + "건의 후속 조치가 필요합니다.";
 
-        return new CallTodoResponseDTO(record.getId(), summary, todoDTOs);
+        return new CallTodoResponseDTO(record.getId(),
+                record.getFileName(),
+                summary, todoDTOs);
     }
 
     // =========================================================================
@@ -373,12 +376,19 @@ public class CallServiceImpl implements CallService {
         CallRecord callRecord = callRecordRepository.findById(recordId)
                 .orElseThrow(() -> new IllegalArgumentException("해당 녹음 기록을 찾을 수 없습니다."));
 
+        // ++ 기존 대본들의 가장 큰 orderIndex를 찾아서 +1000 해줌 (없으면 1000부터 시작)
+        int nextOrderIndex = callRecord.getTranscripts().stream()
+                .mapToInt(t -> t.getOrderIndex() != null ? t.getOrderIndex() : 0)
+                .max()
+                .orElse(0) + 1000;
+
         // 2. 새로운 대본(말풍선) 엔티티 생성
         CallTranscript newTranscript = CallTranscript.builder()
                 .callRecord(callRecord)
                 .speaker(request.speaker())
                 .text(request.text())
                 .timestampOffset(request.timestampOffset() != null ? request.timestampOffset() : "00:00")
+                .orderIndex(nextOrderIndex) // 수동 추가된 항목에도 1000단위 간격 유지
                 .isDeleted(false) // 기본값 명시
                 .build();
 

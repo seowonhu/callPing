@@ -62,6 +62,8 @@ public class GoogleSttServiceImpl implements GoogleSttService {
         String startTime = "00:00";
         long lastWordEndTime = 1;
 
+        int orderIndex = 1000;
+
         for (WordInfo wordInfo : alternative.getWordsList()) {
             int wordSpeakerTag = wordInfo.getSpeakerTag();
 
@@ -89,7 +91,8 @@ public class GoogleSttServiceImpl implements GoogleSttService {
             // 화자가 바뀌었거나, 2초 이상 말이 없었을 때 강제 분리 ...
             if (isSpeakerChanged || isLongPause) {
                 if (currentSentence.length() > 0) {
-                    transcripts.add(createTranscript(callRecord, currentSpeakerTag, startTime, currentSentence.toString().trim()));
+                    transcripts.add(createTranscript(callRecord, currentSpeakerTag, startTime, currentSentence.toString().trim(), orderIndex));
+                    orderIndex += 1000;
                     currentSentence.setLength(0);
                 }
                 currentSpeakerTag = wordSpeakerTag;
@@ -101,7 +104,8 @@ public class GoogleSttServiceImpl implements GoogleSttService {
 
             // 구두점으로 끝났다면 저장하고 초기화
             if (isPunctuation) {
-                transcripts.add(createTranscript(callRecord, currentSpeakerTag, startTime, currentSentence.toString().trim()));
+                transcripts.add(createTranscript(callRecord, currentSpeakerTag, startTime, currentSentence.toString().trim(), orderIndex));
+                orderIndex += 1000;
                 currentSentence.setLength(0);
                 currentSpeakerTag = -1;
                 lastWordEndTime = 0;
@@ -110,18 +114,19 @@ public class GoogleSttServiceImpl implements GoogleSttService {
 
         // 마지막 남은 텍스트 저장
         if (currentSentence.length() > 0) {
-            transcripts.add(createTranscript(callRecord, currentSpeakerTag, startTime, currentSentence.toString().trim()));
+            transcripts.add(createTranscript(callRecord, currentSpeakerTag, startTime, currentSentence.toString().trim(), orderIndex));
         }
 
         return transcripts;
     }
 
-    private CallTranscript createTranscript(CallRecord callRecord, int speakerTag, String timestampOffset, String text) {
+    private CallTranscript createTranscript(CallRecord callRecord, int speakerTag, String timestampOffset, String text, int orderIndex) {
         return CallTranscript.builder()
                 .callRecord(callRecord)
                 .speaker("화자 " + speakerTag)
                 .timestampOffset(timestampOffset)
                 .text(text.trim())
+                .orderIndex(orderIndex)
                 .build();
     }
 
