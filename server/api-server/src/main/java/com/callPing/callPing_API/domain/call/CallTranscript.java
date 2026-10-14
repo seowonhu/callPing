@@ -32,12 +32,15 @@ public class CallTranscript {
 
 
     // 수정 메서드
-    public void updateText(String newText, String newSpeaker) {
-        if (text != null && !text.isBlank()) {
+    public void updateText(String newText, String newSpeaker, Integer newOrderIndex) {
+        if (newText != null && !newText.isBlank()) {
             this.text = newText;
         }
-        if (speaker != null && !speaker.isBlank()) {
+        if (newSpeaker != null && !newSpeaker.isBlank()) {
             this.speaker = newSpeaker;
+        }
+        if (newOrderIndex != null) {
+            this.orderIndex = newOrderIndex; // 드래그로 이동한 새 위치 인덱스 반영
         }
     }
 

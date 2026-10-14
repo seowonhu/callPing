@@ -97,7 +97,13 @@ public class CallServiceImpl implements CallService {
 
         List<TranscriptSegmentDTO> segments = callRecord.getTranscripts().stream()
                 .filter(t -> !t.isDeleted())
-                .map(t -> new TranscriptSegmentDTO(t.getId(), t.getSpeaker(), t.getTimestampOffset(), t.getText()))
+                .map(t -> new TranscriptSegmentDTO(
+                        t.getId(),
+                        t.getSpeaker(),
+                        t.getTimestampOffset(),
+                        t.getText(),
+                        t.getOrderIndex()
+                ))
                 .collect(Collectors.toList());
 
         return new CallAnalysisResponseDTO(
@@ -124,7 +130,13 @@ public class CallServiceImpl implements CallService {
         // 삭제 안 된 대본을 DTO로 변환
         List<TranscriptSegmentDTO> segments = record.getTranscripts().stream()
                 .filter(t -> !t.isDeleted())
-                .map(t -> new TranscriptSegmentDTO(t.getId(), t.getSpeaker(), t.getTimestampOffset(), t.getText()))
+                .map(t -> new TranscriptSegmentDTO(
+                        t.getId(),
+                        t.getSpeaker(),
+                        t.getTimestampOffset(),
+                        t.getText(),
+                        t.getOrderIndex()
+                ))
                 .collect(Collectors.toList());
 
         return new CallDetailsResponseDTO(
@@ -171,14 +183,14 @@ public class CallServiceImpl implements CallService {
                 .orElseThrow(() -> new IllegalArgumentException("해당 문장을 찾을 수 없습니다."));
 
         // 2. 엔티티 텍스트 수정
-        transcript.updateText(request.text(), request.speaker());
-
+        transcript.updateText(request.text(), request.speaker(), request.orderIndex());
         // 3. 수정된 결과를 DTO로 조립하여 반환
         return new TranscriptSegmentDTO(
                 transcript.getId(),
                 transcript.getSpeaker(),
                 transcript.getTimestampOffset(),
-                transcript.getText()
+                transcript.getText(),
+                transcript.getOrderIndex()
         );
     }
 
@@ -376,20 +388,25 @@ public class CallServiceImpl implements CallService {
         CallRecord callRecord = callRecordRepository.findById(recordId)
                 .orElseThrow(() -> new IllegalArgumentException("해당 녹음 기록을 찾을 수 없습니다."));
 
-        // ++ 기존 대본들의 가장 큰 orderIndex를 찾아서 +1000 해줌 (없으면 1000부터 시작)
-        int nextOrderIndex = callRecord.getTranscripts().stream()
-                .mapToInt(t -> t.getOrderIndex() != null ? t.getOrderIndex() : 0)
-                .max()
-                .orElse(0) + 1000;
+        // 말풍선 끼워넣을 위치(orderIndex, 예: 1500)를 보냈으면 그 값을 그대로 사용
+        // 안 보냈을 때(null)만 맨 마지막 말풍선 뒤에 붙도록 처리
+        int targetOrderIndex;
+        if (request.orderIndex() != null) {
+            targetOrderIndex = request.orderIndex();
+        } else {
+            targetOrderIndex = callRecord.getTranscripts().stream()
+                    .mapToInt(t -> t.getOrderIndex() != null ? t.getOrderIndex() : 0)
+                    .max()
+                    .orElse(0) + 1000;
+        }
 
-        // 2. 새로운 대본(말풍선) 엔티티 생성
         CallTranscript newTranscript = CallTranscript.builder()
                 .callRecord(callRecord)
                 .speaker(request.speaker())
                 .text(request.text())
                 .timestampOffset(request.timestampOffset() != null ? request.timestampOffset() : "00:00")
-                .orderIndex(nextOrderIndex) // 수동 추가된 항목에도 1000단위 간격 유지
-                .isDeleted(false) // 기본값 명시
+                .orderIndex(targetOrderIndex) // 지정된 위치 인덱스로 저장
+                .isDeleted(false)
                 .build();
 
         // 3. 부모 리스트에 추가하고 저장 (Cascade 설정으로 인해 save 됨)
@@ -401,7 +418,8 @@ public class CallServiceImpl implements CallService {
                 newTranscript.getId(),
                 newTranscript.getSpeaker(),
                 newTranscript.getTimestampOffset(),
-                newTranscript.getText()
+                newTranscript.getText(),
+                newTranscript.getOrderIndex()
         );
     }
 }

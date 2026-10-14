@@ -9,5 +9,6 @@ import jakarta.validation.constraints.NotBlank;
 public record TranscriptUpdateRequestDTO(
         @NotBlank(message = "수정할 텍스트는 필수입니다.")
         String text,
-        String speaker // 화자 추가/변경을 위한 필드
+        String speaker, // 화자 추가/변경을 위한 필드
+        Integer orderIndex // 드래그앤드롭
 ) {}
