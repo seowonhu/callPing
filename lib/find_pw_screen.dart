@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'api_service.dart';
 
 class FindPwScreen extends StatefulWidget {
   const FindPwScreen({super.key});
@@ -24,7 +26,7 @@ class _FindPwScreenState extends State<FindPwScreen> {
   final TextEditingController confirmPwController = TextEditingController();
 
   // 테스트용 인증번호
-  final String correctCode = '123456';
+  //final String correctCode = '123456';
 
   // 비밀번호 에러 메시지 표시 여부
   bool showFormatError = false;
@@ -41,9 +43,12 @@ class _FindPwScreenState extends State<FindPwScreen> {
   }
 
   // 1단계 -> 인증번호 발송
-  void sendCode() {
-    if (idController.text.trim().isEmpty ||
-        emailController.text.trim().isEmpty) {
+
+  Future<void> sendCode() async {
+    final id = idController.text.trim();
+    final email = emailController.text.trim();
+
+    if (id.isEmpty || email.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('아이디와 이메일을 모두 입력해주세요.'),
@@ -53,22 +58,47 @@ class _FindPwScreenState extends State<FindPwScreen> {
       return;
     }
 
-    setState(() {
-      currentStep = 1;
-      codeController.clear();
-    });
+    try {
+      final response = await ApiService.sendPwResetEmailCode(email);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('인증 코드가 발송되었습니다.'),
-        duration: Duration(seconds: 2),
-      ),
-    );
+      if (response.statusCode == 200) {
+        setState(() {
+          currentStep = 1;
+          codeController.clear();
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('인증 코드가 발송되었습니다.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      } else {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(data['message'] ?? '인증 코드 발송에 실패했습니다.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('서버 연결에 실패했습니다.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
   }
 
   // 2단계 -> 인증번호 확인
-  void verifyCode() {
-    if (codeController.text.trim().isEmpty) {
+  Future<void> verifyCode() async {
+    final code = codeController.text.trim();
+    final email = emailController.text.trim();
+
+    if (code.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('인증 코드를 입력해주세요.'),
@@ -78,14 +108,34 @@ class _FindPwScreenState extends State<FindPwScreen> {
       return;
     }
 
-    if (codeController.text.trim() == correctCode) {
-      setState(() {
-        currentStep = 2; // 인증 성공
-      });
-    } else {
-      setState(() {
-        currentStep = 3; // 인증 실패
-      });
+    try {
+      final response = await ApiService.verifyPwResetEmailCode(email, code);
+
+      if (response.statusCode == 200) {
+        setState(() {
+          currentStep = 2;
+        });
+      } else {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+
+        setState(() {
+          currentStep = 3;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(data['message'] ?? '인증번호가 일치하지 않습니다.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('서버 연결에 실패했습니다.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
     }
   }
 
@@ -99,7 +149,7 @@ class _FindPwScreenState extends State<FindPwScreen> {
   }
 
   // 4단계 -> 새 비밀번호 형식/일치 검사 후 완료 화면으로
-  void submitNewPassword() {
+  Future<void> submitNewPassword() async {
     final String newPw = newPwController.text;
     final String confirmPw = confirmPwController.text;
 
@@ -111,10 +161,38 @@ class _FindPwScreenState extends State<FindPwScreen> {
       showMismatchError = isFormatValid && !isMatch;
     });
 
-    if (isFormatValid && isMatch) {
-      setState(() {
-        currentStep = 5; // 완료
-      });
+    if (!isFormatValid || !isMatch) {
+      return;
+    }
+
+    try {
+      final response = await ApiService.resetPassword(
+        idController.text.trim(),
+        emailController.text.trim(),
+        newPw,
+      );
+
+      if (response.statusCode == 200) {
+        setState(() {
+          currentStep = 5;
+        });
+      } else {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(data['message'] ?? '비밀번호 변경에 실패했습니다.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('서버 연결에 실패했습니다.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
     }
   }
 

@@ -1,12 +1,24 @@
+import 'dart:developer';
 import 'dart:ui';
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+// import 'package:shared_preferences/shared_preferences.dart';
 import 'api_service.dart';
 import 'feedback_result_screen.dart';
+import 'transcript_screen.dart';
+import 'home_screen.dart';
 
 class AnalyticsScreen extends StatefulWidget {
-  const AnalyticsScreen({super.key});
+  final bool showBackButton;
+  final VoidCallback? onBackPressed;
+
+  const AnalyticsScreen({
+    super.key,
+    this.showBackButton = false,
+    this.onBackPressed,
+  });
 
   @override
   State<AnalyticsScreen> createState() => _AnalyticsScreenState();
@@ -14,93 +26,373 @@ class AnalyticsScreen extends StatefulWidget {
 
 class _AnalyticsScreenState extends State<AnalyticsScreen>
     with AutomaticKeepAliveClientMixin {
-  // 탭 이동해도 캐시 유지되도록
   @override
   bool get wantKeepAlive => true;
 
   List<Map<String, dynamic>> _uploadedFiles = [];
-
-  // 화면이 리빌드되어도 캐시 지워지지 않도록
   final Map<int, dynamic> _globalAnalysisCache = {};
+  final Set<int> _processingRecords = {}; // 강제로 AI 분석중 띄울 파일 ID 목록
+  Timer? _pollingTimer; // 새로고침 타이머
 
-  Future<void> _pickAudioFile() async {
-    // 서버나 로컬에 저장된 권한 상태 확인
-    // 실제로는 GET/users/me/permissions의 file_upload_permission 응답값을 사용하거나 전역 변수 참조
-    bool hasUploadPermission = true;
+  final ScrollController _scrollController = ScrollController();
+  int _currentPage = 0;
+  int _totalPages = 1;
+  bool _isLoadingMore = false;
+  bool _hasMorePages = true;
 
-    if (!hasUploadPermission) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('설정에서 파일 업로드 권한을 허용해주세요.')));
-      return; // 권한 꺼져있으면 함수 강제 종료 (파일 탐색기 차단)
+  @override
+  void initState() {
+    super.initState();
+    _fetchCallList();
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    final position = _scrollController.position;
+    if (position.pixels >= position.maxScrollExtent - 200) {
+      if (_hasMorePages && !_isLoadingMore) {
+        _fetchCallList(loadMore: true);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _pollingTimer?.cancel(); // 화면 닫힐 때 타이머 끄기
+    super.dispose();
+  }
+
+  // 완료나 실패 뜰 때까지 3초마다 새로고침
+  void _startPolling() {
+    _pollingTimer?.cancel(); // 타이머 초기화
+    _pollingTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (_processingRecords.isEmpty) {
+        timer.cancel();
+      } else {
+        // 분석 중이면 목록 새로고침
+        if (mounted) _fetchCallList();
+      }
+    });
+  }
+
+  Future<void> _fetchCallList({bool loadMore = false}) async {
+    if (_isLoadingMore) return;
+    if (loadMore && !_hasMorePages) return;
+
+    final int page = loadMore ? _currentPage + 1 : 0;
+
+    if (mounted) {
+      setState(() {
+        _isLoadingMore = true;
+      });
     }
 
-    // 권한 켜져 있을 때만 코드 실행
-    FilePickerResult? result = await FilePicker.pickFiles(
+    try {
+      final response = await ApiService.getCallList(page: page, size: 10);
+
+      final decodedResponse = utf8.decode(response.bodyBytes);
+      debugPrint('\n=== [디버그] 전체 통화 목록(GET /calls) 서버 응답 ===');
+      debugPrint(decodedResponse);
+      debugPrint('=======================================================\n');
+
+      if (response.statusCode == 200) {
+        final decodedData = jsonDecode(utf8.decode(response.bodyBytes));
+        final Map<String, dynamic> data = decodedData.containsKey('data')
+            ? decodedData['data']
+            : decodedData;
+
+        final List<dynamic> calls = data['content'] ?? data['calls'] ?? [];
+
+        final int currentPage =
+            int.tryParse(
+              data['currentPage']?.toString() ??
+                  data['current_page']?.toString() ??
+                  data['current_Page']?.toString() ??
+                  data['number']?.toString() ??
+                  '',
+            ) ??
+            page;
+        final int totalPages =
+            int.tryParse(
+              data['totalPages']?.toString() ??
+                  data['total_pages']?.toString() ??
+                  data['total_Pages']?.toString() ??
+                  '',
+            ) ??
+            1;
+
+        if (mounted) {
+          setState(() {
+            _currentPage = currentPage;
+            _totalPages = totalPages;
+            _hasMorePages = _currentPage + 1 < _totalPages;
+
+            final List<Map<String, dynamic>>
+            newFiles = calls.map<Map<String, dynamic>>((call) {
+              final rawRecordId = call['record_id'] ?? call['recordId'];
+              final rawCallerName = call['caller_name'] ?? call['callerName'];
+              final rawUploadTime = call['upload_time'] ?? call['uploadTime'];
+              final rawAnalysisStatus =
+                  call['analysis_status'] ?? call['analysisStatus'] ?? '';
+              final rawFileName =
+                  call['file_name'] ??
+                  call['fileName'] ??
+                  call['record_title'] ??
+                  call['recordTitle'];
+              final rawFileSize = call['file_size'] ?? call['fileSize'];
+
+              String apiStatus = rawAnalysisStatus.toString();
+              String appStatus = 'error';
+              double? progress;
+
+              // 서버 상태 덮어씌움
+              final id = rawRecordId as int?;
+
+              // 서버가 '완료', '실패'라고 답을 준 파일이면 명단에서 삭제
+              if (id != null &&
+                  (apiStatus == '완료' ||
+                      apiStatus == 'COMPLETED' ||
+                      apiStatus == 'AI 분석 실패')) {
+                _processingRecords.remove(id);
+              }
+              // [분석 시작] 눌러서 명단에 있는 파일이면
+              else if (id != null && _processingRecords.contains(id)) {
+                // AI 분석중으로 덮어씌움
+                apiStatus = 'AI 분석중';
+              }
+
+              if (apiStatus == 'STT 분석중') {
+                appStatus = 'stt_analyzing';
+                progress = 0.25;
+              } else if (apiStatus == '대본 수정 대기') {
+                appStatus = 'waiting_edit';
+                progress = 0.5;
+              } else if (apiStatus == 'AI 분석중') {
+                appStatus = 'ai_analyzing';
+                progress = 0.75;
+              } else if (apiStatus == '완료' || apiStatus == 'COMPLETED') {
+                appStatus = 'completed';
+                progress = 1.0;
+              }
+
+              String rawRelation = (rawCallerName ?? '').toString().trim();
+
+              return {
+                'record_id': rawRecordId,
+                'fileName': rawFileName ?? '통화녹음_$rawRecordId',
+                'relation': rawRelation.isEmpty ? '알 수 없음' : rawRelation,
+                'summary': '',
+                'uploadDate': rawUploadTime,
+                'fileSize': rawFileSize?.toString() ?? '',
+                'status': appStatus,
+                'progress': progress,
+                'cached_analysis': null,
+              };
+            }).toList();
+
+            if (loadMore) {
+              _uploadedFiles.addAll(newFiles);
+            } else {
+              _uploadedFiles = newFiles;
+            }
+          });
+        }
+      } else {
+        debugPrint('통화 목록 조회 실패: HTTP ${response.statusCode}');
+
+        // 서버 500 에러 처리
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('서버 오류로 통화 목록을 갱신하지 못했습니다. 잠시 후 다시 시도해주세요.'),
+            ),
+          );
+          setState(() {
+            for (var file in _uploadedFiles) {
+              if (file['status'] == 'ai_analyzing') {
+                file['status'] = 'error';
+              }
+            }
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('목록 불러오기 실패: $e');
+      // 서버 에러
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('네트워크 문제로 갱신에 실패했습니다.')));
+        setState(() {
+          for (var file in _uploadedFiles) {
+            if (file['status'] == 'ai_analyzing') {
+              file['status'] = 'error';
+            }
+          }
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingMore = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _pickAudioFile() async {
+    bool hasUploadPermission = false;
+
+    try {
+      final response = await ApiService.getPermissions();
+      if (response.statusCode == 200) {
+        final responseData = jsonDecode(utf8.decode(response.bodyBytes));
+        final data = responseData['data'] ?? responseData;
+        hasUploadPermission = data['file_upload_permission'] ?? false;
+      }
+    } catch (e) {
+      debugPrint('권한 설정 조회 실패: $e');
+    }
+
+    if (!hasUploadPermission) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('설정에서 파일 업로드 권한을 허용해주세요.')),
+        );
+      }
+      return;
+    }
+
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['m4a', 'mp3', 'wav', 'aac', 'flac'],
+      allowedExtensions: ['mp3', 'wav'],
     );
 
-    if (result != null && result.files.first.path != null) {
-      String filePath = result.files.first.path!;
-      String fileName = result.files.first.name;
+    if (result == null || result.files.first.path == null) {
+      return;
+    }
 
-      // 화면에 '업로드 중' 상태로 파일 항목 먼저 추가
-      Map<String, dynamic> newFile = {
-        'record_id': null, // 실제 서버 연동 시 백엔드에서 받아온 ID 사용
-        'fileName': fileName,
-        'relation': '',
-        'summary': '',
-        'uploadDate': DateTime.now().toIso8601String(),
-        'fileSize': result.files.first.size.toString(),
-        'status': 'uploading',
-        'progress': null, // 업로드 진행률 표시용
-        'cached_analysis': null, // 캐시 저장소 명시적 초기화
-      };
+    final String filePath = result.files.first.path!;
+    final String fileName = result.files.first.name;
 
+    final Map<String, dynamic> newFile = {
+      'record_id': null,
+      'fileName': fileName,
+      'relation': '알 수 없음',
+      'summary': '',
+      'uploadDate': DateTime.now().toIso8601String(),
+      'fileSize': result.files.first.size.toString(),
+      'status': 'uploading',
+      'progress': null,
+      'cached_analysis': null,
+    };
+
+    if (mounted) {
       setState(() {
-        _uploadedFiles.add(newFile);
+        _uploadedFiles.insert(0, newFile);
       });
+    }
 
-      try {
-        // 실제 백엔드 API 연동(파일 전송)
-        final response = await ApiService.uploadAudio(filePath);
+    try {
+      final response = await ApiService.uploadAudio(filePath);
+      final responseString = await response.stream.bytesToString();
 
-        // 서버 응답 확인을 위한 디버그 로그
-        final responseString = await response.stream.bytesToString();
-        print("파일 업로드 서버 응답 코드: ${response.statusCode}");
-        print("파일 업로드 서버 응답 데이터: $responseString");
+      debugPrint('파일 업로드(POST /calls) 서버 응답 코드: ${response.statusCode}');
+      debugPrint('파일 업로드(POST /calls) 서버 응답 데이터: $responseString');
 
-        if (response.statusCode == 201) {
-          // 전송 성공 시 서버 응답 해독
-          final responseString = await response.stream.bytesToString();
-          final responseData = jsonDecode(responseString);
+      if (response.statusCode == 201) {
+        final responseData = jsonDecode(responseString);
+        final data = responseData['data'] ?? responseData;
+        final dynamic recordIdValue = data['recordId'] ?? data['record_id'];
 
-          // 서버가 파일 받고 발급해 준 record_id
-          int realRecordId = responseData['data']['record_id'];
+        if (recordIdValue == null)
+          throw Exception('업로드 성공 응답에 recordId가 없습니다.');
 
-          if (mounted) {
-            setState(() {
-              newFile['record_id'] = realRecordId;
-              newFile['status'] = 'completed'; // 분석 완료 상태로 즉시 갱신 (추후 폴링 필요)
-              newFile['progress'] = 1.0;
-            });
-          }
-        } else {
-          // 400, 500 등 에러 발생
-          if (mounted) {
-            setState(() {
-              newFile['status'] = 'error';
-            });
-          }
+        final int realRecordId = int.parse(recordIdValue.toString());
+
+        if (mounted) {
+          setState(() {
+            newFile['record_id'] = realRecordId;
+            String receivedRelation =
+                (responseData['caller_Name'] ?? responseData['callerName'])
+                    ?.toString() ??
+                '';
+            newFile['relation'] = receivedRelation.trim().isEmpty
+                ? '알 수 없음'
+                : receivedRelation;
+            newFile['status'] = 'stt_analyzing';
+            newFile['progress'] = null;
+            newFile['fileName'] =
+                responseData['file_Name'] ??
+                responseData['fileName'] ??
+                fileName;
+            newFile['uploadDate'] =
+                responseData['upload_Time'] ??
+                responseData['uploadTime'] ??
+                DateTime.now().toIso8601String();
+          });
         }
-      } catch (e) {
-        // 네트워크 통신 실패
+
+        debugPrint('파일 업로드 성공 - recordId: $realRecordId');
+        _checkAnalysisStatus(realRecordId);
+      } else {
         if (mounted) {
           setState(() {
             newFile['status'] = 'error';
           });
         }
+      }
+    } catch (e) {
+      debugPrint("파일 업로드 실패: $e");
+      if (mounted) {
+        setState(() {
+          newFile['status'] = 'error';
+        });
+      }
+    }
+  }
+
+  Future<void> _checkAnalysisStatus(int recordId) async {
+    for (int i = 0; i < 60; i++) {
+      await Future.delayed(const Duration(seconds: 5));
+      if (!mounted) return;
+
+      try {
+        final response = await ApiService.getCallStatus(recordId);
+        if (response.statusCode == 200) {
+          final responseData = jsonDecode(utf8.decode(response.bodyBytes));
+          final data = responseData['data'] ?? responseData;
+
+          final String status = data['status']?.toString() ?? '';
+          final double progressPercentage = (data['progress_percentage'] ?? 0)
+              .toDouble();
+          final int index = _uploadedFiles.indexWhere(
+            (file) => file['record_id']?.toString() == recordId.toString(),
+          );
+
+          if (index != -1 && mounted) {
+            setState(() {
+              _uploadedFiles[index]['progress'] = progressPercentage / 100;
+              if (status == '완료' ||
+                  status == 'COMPLETED' ||
+                  progressPercentage >= 100) {
+                _uploadedFiles[index]['status'] = 'completed';
+                _uploadedFiles[index]['progress'] = 100.0;
+              } else if (status == '대본 수정 대기') {
+                _uploadedFiles[index]['status'] = 'waiting_edit';
+              } else if (status == 'AI 분석중') {
+                _uploadedFiles[index]['status'] = 'ai_analyzing';
+              }
+            });
+
+            if (_uploadedFiles[index]['status'] == 'completed' ||
+                _uploadedFiles[index]['status'] == 'waiting_edit')
+              return;
+          }
+        }
+      } catch (e) {
+        debugPrint('분석 상태 확인 중 오류: $e');
       }
     }
   }
@@ -111,10 +403,233 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
 
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024) {
+    if (bytes < 1024 * 1024 * 1024)
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  }
+
+  Future<void> _handleActionTap(
+    int index,
+    String status,
+    int recordId,
+    String displayFileName,
+  ) async {
+    // 상태는 '완료'인데 캐시 안의 요약이 비어있다면?
+    if (_globalAnalysisCache.containsKey(recordId)) {
+      final cachedData = _globalAnalysisCache[recordId];
+
+      if (status == 'completed' && cachedData['isAnalysisFetched'] != true) {
+        _globalAnalysisCache.remove(recordId);
+      } else {
+        _navigateToResultScreen(recordId, displayFileName, status);
+        return;
+      }
+    }
+
+    bool loadingDialogShown = false;
+    if (mounted) {
+      loadingDialogShown = true;
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) =>
+            const Center(child: CircularProgressIndicator(color: Colors.black)),
+      );
+    }
+
+    try {
+      final detailsResponse = await ApiService.getCallDetails(
+        recordId,
+      ).timeout(const Duration(seconds: 15));
+      List<dynamic> transcripts = [];
+      if (detailsResponse.statusCode == 200) {
+        final detailsResponseData = jsonDecode(
+          utf8.decode(detailsResponse.bodyBytes),
+        );
+        final Map<String, dynamic> detailsData =
+            detailsResponseData['data'] is Map
+            ? Map<String, dynamic>.from(detailsResponseData['data'])
+            : Map<String, dynamic>.from(detailsResponseData);
+        if (detailsData['transcripts'] is List) {
+          transcripts = List<dynamic>.from(detailsData['transcripts']);
+        } else if (detailsData['transcript'] is List) {
+          transcripts = List<dynamic>.from(detailsData['transcript']);
+        }
+      }
+
+      Map<String, dynamic> analysisData = {
+        'summary': '',
+        'expressionFeedback': '',
+        'improvementFeedback': '',
+      };
+
+      List<dynamic> todos = [];
+      String todoSummaryText = '';
+
+      // 완료 상태일 때만 분석 결과, TODO 가져오기
+      if (status == 'completed') {
+        final analysisResponse = await ApiService.getCallAnalysis(
+          recordId,
+        ).timeout(const Duration(seconds: 15));
+
+        if (analysisResponse.statusCode == 200) {
+          final analysisStr = utf8.decode(analysisResponse.bodyBytes);
+
+          // 요약, 표현, 피드백 데이터 출력
+          // ==============================================================
+          // [공식 로그 함수]
+          // ==============================================================
+          log(analysisStr, name: 'FULL_JSON_DATA');
+          // ==============================================================
+
+          final analysisResponseData = jsonDecode(analysisStr);
+          analysisData = analysisResponseData['data'] is Map
+              ? Map<String, dynamic>.from(analysisResponseData['data'])
+              : Map<String, dynamic>.from(analysisResponseData);
+        }
+
+        // TODO 리스트 가져오기
+        final todoResponse = await ApiService.getCallTodos(
+          recordId,
+        ).timeout(const Duration(seconds: 15));
+
+        if (todoResponse.statusCode == 200) {
+          final todoStr = utf8.decode(todoResponse.bodyBytes);
+
+          // TODO 리스트 데이터 출력
+          debugPrint('\n=== [응답] TODO 리스트 결과 ===');
+          debugPrint(todoStr);
+          debugPrint('==============================\n');
+
+          final todoData = jsonDecode(todoStr);
+          if (todoData['data'] != null) {
+            todos = todoData['data']['todos'] ?? [];
+            todoSummaryText = todoData['data']['todo_summary'] ?? '';
+          }
+        }
+      }
+
+      if (loadingDialogShown && mounted) {
+        Navigator.pop(context);
+        loadingDialogShown = false;
+      }
+
+      final Map<String, dynamic> cacheData = {
+        'summary': analysisData['summary']?.toString() ?? '',
+        'expression': analysisData['expression']?.toString() ?? '',
+        'feedback': analysisData['feedback']?.toString() ?? '',
+        'transcript': transcripts,
+        'todos': todos,
+        'todoSummary': todoSummaryText,
+        'isAnalysisFetched': status == 'completed',
+      };
+      _globalAnalysisCache[recordId] = cacheData;
+
+      if (mounted) {
+        _navigateToResultScreen(recordId, displayFileName, status);
+      }
+    } catch (e) {
+      if (loadingDialogShown && mounted) {
+        Navigator.pop(context);
+      }
+      debugPrint('조회 실패: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('데이터를 불러오지 못했습니다. 다시 시도해주세요.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _navigateToResultScreen(
+    int recordId,
+    String displayFileName,
+    String status,
+  ) async {
+    final cachedData = _globalAnalysisCache[recordId];
+    if (cachedData == null) return;
+
+    // final prefs = await SharedPreferences.getInstance();
+    // final bool isReviewed = prefs.getBool('reviewed_$recordId') ?? false;
+
+    if (status == 'completed') {
+      // 검토 완료된 통화는 피드백 결과 화면으로
+      // 화면 넘어가기 직전 (Navigator.push 바로 위)에 이 3줄만 복붙하세요!
+      debugPrint("==================================================");
+      debugPrint("서버가 준 요약(summary): ${cachedData['summary']}");
+      debugPrint(
+        "서버가 준 투두(todoSummary): ${cachedData['todo_summary'] ?? cachedData['todoSummary']}",
+      );
+      debugPrint("==================================================");
+      final updatedData = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => FeedbackResultScreen(
+            recordId: recordId,
+            fileName: displayFileName,
+            summary: cachedData['summary'] ?? '',
+            expression: cachedData['expression'] ?? '',
+            feedback: cachedData['feedback'] ?? '',
+            transcript: cachedData['transcript'] ?? [],
+            todos: cachedData['todos'] ?? [],
+            todoSummary:
+                cachedData['todoSummary'] ?? cachedData['todo_summary'] ?? '',
+          ),
+        ),
+      );
+
+      if (updatedData != null && mounted) {
+        if (updatedData is bool && updatedData == true) {
+          _fetchCallList(); // 분석 시작 후 돌아온 경우 목록 새로고침
+        } else if (updatedData is List) {
+          _globalAnalysisCache[recordId]['transcript'] =
+              updatedData; // 수정된 원문 캐시 반영
+        }
+      }
+    } else {
+      // 대본 수정 대기 또는 단순 원문 확인 상태 -> 원문 화면으로
+      final updatedData = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => TranscriptScreen(
+            recordId: recordId,
+            fileName: displayFileName,
+            transcripts: cachedData['transcript'] ?? [],
+            isReadOnly: false,
+          ),
+        ),
+      );
+
+      if (updatedData != null && mounted) {
+        if (updatedData is Map) {
+          // 수정된 대본 띄움
+          if (updatedData['transcripts'] != null) {
+            _globalAnalysisCache[recordId]['transcript'] =
+                updatedData['transcripts'];
+          }
+          if (updatedData['analyzeStarted'] == true) {
+            setState(() {
+              // 강제 로딩 명단
+              _processingRecords.add(recordId);
+
+              final index = _uploadedFiles.indexWhere(
+                (file) => file['record_id'] == recordId,
+              );
+              if (index != -1) {
+                _uploadedFiles[index]['analysis_status'] = 'AI 분석중';
+                _uploadedFiles[index]['status'] = 'ai_analyzing';
+                _uploadedFiles[index]['progress'] = 0.75;
+              }
+            });
+            // 끝날 때까지 3초마다 계속 확인
+            _startPolling();
+          } // 분석 시작 버튼 눌러서 돌아왔을 때 api 재호출해서 AI 분석중 상태로 갱신
+        } else if (updatedData is List) {
+          _globalAnalysisCache[recordId]['transcript'] =
+              updatedData; // 원문 수정 후 되돌아왔을 때만 캐시 갱신
+        }
+      }
+    }
   }
 
   void _showEditDialog(int index) {
@@ -146,7 +661,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           child: SingleChildScrollView(
             child: Container(
               width: 300,
-              height: 460,
               padding: const EdgeInsets.symmetric(
                 horizontal: 24.0,
                 vertical: 30.0,
@@ -157,7 +671,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 border: Border.all(color: Colors.black, width: 1),
               ),
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   const SizedBox(height: 10),
                   Column(
@@ -241,6 +755,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                       TextField(
                         controller: summaryController,
                         maxLines: 4,
+                        textInputAction: TextInputAction.done,
                         decoration: const InputDecoration(
                           hintText: '통화 내용을 간단히 적어주세요',
                           border: InputBorder.none,
@@ -249,6 +764,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                       ),
                     ],
                   ),
+                  const SizedBox(height: 32),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
@@ -264,16 +780,70 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                         ),
                       ),
                       ElevatedButton(
-                        onPressed: () {
-                          setState(() {
-                            _uploadedFiles[index]['fileName'] =
-                                nameController.text + extension;
-                            _uploadedFiles[index]['relation'] =
-                                relationController.text;
-                            _uploadedFiles[index]['summary'] =
-                                summaryController.text;
-                          });
-                          Navigator.of(ctx).pop();
+                        onPressed: () async {
+                          final recordId = _uploadedFiles[index]['record_id'];
+
+                          // 파일 iD 아직 없을 때
+                          if (recordId == null) {
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                              const SnackBar(
+                                content: Text('파일이 아직 업로드 중이거나 오류가 있습니다.'),
+                              ),
+                            );
+                            return;
+                          }
+
+                          final newName = nameController.text + extension;
+                          final newRelation = relationController.text;
+                          final newSummary = summaryController.text;
+
+                          try {
+                            final res = await ApiService.updateCallRecord(
+                              recordId,
+                              newName,
+                              newRelation,
+                              newSummary,
+                            );
+
+                            if (res.statusCode == 200 ||
+                                res.statusCode == 204) {
+                              if (mounted) {
+                                setState(() {
+                                  _uploadedFiles[index]['fileName'] = newName;
+                                  _uploadedFiles[index]['relation'] =
+                                      newRelation;
+                                  _uploadedFiles[index]['summary'] = newSummary;
+
+                                  globalChecklistKey.currentState?.fetchTodos();
+                                });
+                              }
+                              if (ctx.mounted) Navigator.of(ctx).pop();
+                            } else {
+                              // 백엔드에서 200이 아닌 에러를 뱉었을 때 화면에 띄움
+                              debugPrint(
+                                '저장 실패 서버 응답: ${res.statusCode} / ${res.body}',
+                              );
+                              if (ctx.mounted) {
+                                ScaffoldMessenger.of(ctx).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      '서버 에러가 발생했습니다. (코드: ${res.statusCode})',
+                                    ),
+                                  ),
+                                );
+                              }
+                            }
+                          } catch (e) {
+                            // 통신 터졌을 때 (네트워크 문제 등)
+                            debugPrint('수정 통신 실패: $e');
+                            if (ctx.mounted) {
+                              ScaffoldMessenger.of(ctx).showSnackBar(
+                                const SnackBar(
+                                  content: Text('통신에 실패했습니다. 다시 시도해주세요.'),
+                                ),
+                              );
+                            }
+                          }
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.black,
@@ -303,15 +873,25 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black, size: 28),
-          onPressed: () => Navigator.maybePop(context),
-        ),
+        automaticallyImplyLeading: false,
+        leading: widget.showBackButton
+            ? IconButton(
+                icon: const Icon(
+                  Icons.arrow_back,
+                  color: Colors.black,
+                  size: 28,
+                ),
+                onPressed:
+                    widget.onBackPressed ?? () => Navigator.maybePop(context),
+              )
+            : null,
         title: const Text(
           '파일 업로드',
           style: TextStyle(
@@ -371,6 +951,66 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           ),
         ),
         const SizedBox(height: 60),
+
+        ElevatedButton.icon(
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => FeedbackResultScreen(
+                  recordId: 999,
+                  fileName: '테스트용_미용실_예약취소.mp3',
+                  summary: '미용실 예약 취소 및 일정 변경 문의',
+                  expression:
+                      '대체로 정중한 어조를 사용하였으나, 초반에 말이 약간 빠르고 머뭇거리는 경향이 있습니다.',
+                  feedback:
+                      '예약 취소 사유를 서두에 먼저 명확히 말씀하시면 통화가 훨씬 원활하게 진행될 수 있습니다. 다음번에는 심호흡을 한 번 하고 천천히 말씀해 보세요.',
+                  transcript: const [
+                    {
+                      'transcriptId': 1,
+                      'speaker': '화자 1',
+                      'text': '아, 안녕하세요... 저기 오늘 오후 3시 예약한 사람인데요.',
+                    },
+                    {
+                      'transcriptId': 2,
+                      'speaker': '화자 2',
+                      'text': '네 고객님, 안녕하세요.',
+                    },
+                    {
+                      'transcriptId': 3,
+                      'speaker': '화자 1',
+                      'text': '제가 오늘 갑자기 급한 일이 생겨가지고... 예약을 좀 취소해야 할 것 같아서요...',
+                    },
+                    {
+                      'transcriptId': 4,
+                      'speaker': '화자 2',
+                      'text': '아, 네 알겠습니다. 취소 처리 도와드릴까요?',
+                    },
+                    {
+                      'transcriptId': 5,
+                      'speaker': '화자 1',
+                      'text': '네네, 죄송합니다. 다음에 다시 연락드릴게요.',
+                    },
+                  ],
+                ),
+              ),
+            );
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.blue.shade100,
+            foregroundColor: Colors.black,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          icon: const Icon(Icons.science, color: Colors.blue),
+          label: const Text(
+            'UI 테스트용 피드백 화면 보기',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+        ),
+        const SizedBox(height: 40),
       ],
     );
   }
@@ -380,12 +1020,22 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
       children: [
         Expanded(
           child: ListView.builder(
+            controller: _scrollController,
             padding: const EdgeInsets.symmetric(
               horizontal: 16.0,
               vertical: 20.0,
             ),
-            itemCount: _uploadedFiles.length,
+            itemCount: _uploadedFiles.length + (_isLoadingMore ? 1 : 0),
             itemBuilder: (context, index) {
+              if (index == _uploadedFiles.length) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 20),
+                  child: Center(
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                );
+              }
+
               String originalFileName =
                   _uploadedFiles[index]['fileName']?.toString() ?? '';
               String relation =
@@ -394,11 +1044,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                   _uploadedFiles[index]['uploadDate']?.toString() ?? '';
               String sizeString =
                   _uploadedFiles[index]['fileSize']?.toString() ?? '';
-
               String status =
                   _uploadedFiles[index]['status']?.toString() ?? 'completed';
-              double progress =
-                  (_uploadedFiles[index]['progress'] ?? 0.0) as double;
 
               String displayFileName = originalFileName;
               int dotIndex = originalFileName.lastIndexOf('.');
@@ -410,7 +1057,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               if (dateString.isNotEmpty) {
                 DateTime uploadDate = DateTime.parse(dateString);
                 DateTime now = DateTime.now();
-
                 if (uploadDate.year == now.year) {
                   formattedDate = '${uploadDate.month}월 ${uploadDate.day}일';
                 } else {
@@ -422,7 +1068,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               String formattedSize = _formatFileSize(sizeString);
               String subtitleText = formattedDate;
               if (formattedSize.isNotEmpty) {
-                subtitleText = '$formattedDate • $formattedSize';
+                subtitleText = '$formattedDate\n$formattedSize';
               }
 
               return Container(
@@ -437,30 +1083,35 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 padding: const EdgeInsets.symmetric(vertical: 16.0),
                 child: Row(
                   children: [
-                    if (relation.isNotEmpty) ...[
-                      const Icon(
-                        Icons.person_outline,
-                        size: 18,
-                        color: Colors.grey,
-                      ),
-                      const SizedBox(width: 4),
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 70),
-                        child: Text(
-                          relation,
-                          style: const TextStyle(
-                            color: Colors.black87,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
+                    GestureDetector(
+                      onTap: () => _showEditDialog(index),
+                      behavior: HitTestBehavior.opaque,
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.person_outline,
+                            size: 18,
+                            color: Colors.grey,
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                          const SizedBox(width: 4),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 70),
+                            child: Text(
+                              relation.trim().isEmpty ? '알 수 없음' : relation,
+                              style: const TextStyle(
+                                color: Colors.black87,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 8),
-                    ] else ...[
-                      const SizedBox(width: 12),
-                    ],
+                    ),
+                    const SizedBox(width: 8),
+
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.center,
@@ -495,11 +1146,22 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                       ),
                     ),
                     const SizedBox(width: 8),
-                    if (status == 'uploading') ...[
+
+                    if (status == 'uploading' ||
+                        status == 'stt_analyzing' ||
+                        status == 'ai_analyzing') ...[
                       Text(
-                        '${(progress * 100).toInt()}%',
-                        style: const TextStyle(
-                          color: Color(0xFF1A9000),
+                        status == 'ai_analyzing'
+                            ? 'AI 분석 중...'
+                            : (status == 'stt_analyzing'
+                                  ? 'STT 추출 중...'
+                                  : '업로드 중...'),
+                        style: TextStyle(
+                          color: status == 'ai_analyzing'
+                              ? Colors.purple
+                              : (status == 'stt_analyzing'
+                                    ? Colors.orange
+                                    : const Color(0xFF1A9000)),
                           fontSize: 13,
                           fontWeight: FontWeight.bold,
                         ),
@@ -509,148 +1171,35 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                         width: 16,
                         height: 16,
                         child: CircularProgressIndicator(
-                          value: progress,
                           strokeWidth: 2.5,
-                          color: const Color(0xFF1A9000),
-                          backgroundColor: Colors.grey.shade300,
+                          color: status == 'ai_analyzing'
+                              ? Colors.purple
+                              : (status == 'stt_analyzing'
+                                    ? Colors.orange
+                                    : const Color(0xFF1A9000)),
                         ),
                       ),
                       const SizedBox(width: 8),
-                    ] else if (status == 'analyzing') ...[
-                      const Text(
-                        '분석 중...',
-                        style: TextStyle(
-                          color: Colors.orange,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          color: Colors.orange,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                    ] else ...[
+                    ] else if (status == 'waiting_edit' ||
+                        status == 'completed') ...[
                       InkWell(
                         onTap: () async {
-                          // null 값 허용하는 int? 타입으로 수정
-                          int? recordId = _uploadedFiles[index]['record_id'];
-
-                          // ID 발급되지 않았다면(업로드 실패) 작동 중지 및 안내 띄우기
+                          final int? recordId =
+                              _uploadedFiles[index]['record_id'];
                           if (recordId == null) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text('서버 업로드에 실패한 파일입니다. 다시 업로드해주세요.'),
+                                content: Text('서버 업로드에 실패한 파일입니다.'),
                               ),
                             );
                             return;
                           }
-
-                          // 캐시 저장소에 데이터 있는지 확인
-                          if (_globalAnalysisCache.containsKey(recordId)) {
-                            print("캐시된 분석 데이터가 존재합니다. (recordId: $recordId)");
-                            final data = _globalAnalysisCache[recordId]!;
-
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => FeedbackResultScreen(
-                                  fileName: displayFileName,
-                                  summary: data['summary'] ?? '요약 내용 없음',
-                                  expression:
-                                      data['expression'] ?? '표현 분석 내용 없음',
-                                  feedback: data['feedback'] ?? '개선 피드백 없음',
-                                  transcript: data['transcript'] ?? [],
-                                ),
-                              ),
-                            );
-                            return; // 캐시가 있으면 API 호출 없이 바로 화면 이동
-                          }
-
-                          // 저장된 데이터 없을 때(최초 1회) 분석 데이터 불러오는 동안 화면에 로딩 다이얼로그 띄우기
-                          showDialog(
-                            context: context,
-                            barrierDismissible: false, // 로딩 중 다른 곳 터치 방지
-                            builder: (context) => const Center(
-                              child: CircularProgressIndicator(
-                                color: Colors.black,
-                              ),
-                            ),
+                          await _handleActionTap(
+                            index,
+                            status,
+                            recordId,
+                            displayFileName,
                           );
-
-                          try {
-                            final response =
-                                await ApiService.getCallAnalysis(
-                                  recordId,
-                                ).timeout(
-                                  const Duration(seconds: 15),
-                                ); // 15초 무응답 시 강제 종료
-
-                            if (context.mounted)
-                              Navigator.pop(context); // 로딩창 닫기
-
-                            if (response.statusCode == 200) {
-                              final responseData = jsonDecode(
-                                utf8.decode(response.bodyBytes),
-                              );
-                              final data = responseData['data'];
-
-                              // 2. 분석 데이터가 존재하면 캐시에 저장 후 결과 화면으로 이동
-                              _globalAnalysisCache[recordId] = data; // 캐시에 저장
-
-                              if (context.mounted) {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => FeedbackResultScreen(
-                                      fileName: displayFileName,
-                                      summary: data['summary'] ?? '요약 내용 없음',
-                                      expression:
-                                          data['expression'] ?? '표현 분석 내용 없음',
-                                      feedback: data['feedback'] ?? '개선 피드백 없음',
-                                      transcript: data['transcript'] ?? [],
-                                    ),
-                                  ),
-                                );
-                              }
-                            } else {
-                              // 통신 실패(404) 시에도 빈 데이터를 캐시에 남김
-                              _globalAnalysisCache[recordId] = {};
-
-                              if (context.mounted) {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => FeedbackResultScreen(
-                                      fileName: displayFileName,
-                                    ),
-                                  ),
-                                );
-                              }
-                            }
-                          } catch (e) {
-                            // 3. 에러 나더라도 로딩창이 닫히지 않고 남아있는 현상 방지
-                            if (context.mounted) Navigator.pop(context);
-
-                            // 서버 꺼져서 에러 났을 때도 빈 데이터를 캐시에 남김
-                            _globalAnalysisCache[recordId] = {};
-
-                            if (context.mounted) {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => FeedbackResultScreen(
-                                    fileName: displayFileName,
-                                  ),
-                                ),
-                              );
-                            }
-                          }
                         },
                         child: Container(
                           padding: const EdgeInsets.symmetric(
@@ -658,12 +1207,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                             vertical: 6.0,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFD2E2FF),
+                            color: status == 'completed'
+                                ? Colors.green.shade100
+                                : const Color(0xFFD2E2FF),
                             borderRadius: BorderRadius.circular(4),
                           ),
-                          child: const Text(
-                            '피드백 보기',
-                            style: TextStyle(
+                          child: Text(
+                            status == 'completed' ? '피드백 보기' : '원문 검토',
+                            style: const TextStyle(
                               color: Colors.black,
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
@@ -671,7 +1222,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                           ),
                         ),
                       ),
+                      const SizedBox(width: 8),
                     ],
+
                     SizedBox(
                       width: 32,
                       child: PopupMenuButton<String>(
@@ -690,9 +1243,58 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                           if (value == 'edit') {
                             _showEditDialog(index);
                           } else if (value == 'delete') {
-                            setState(() => _uploadedFiles.removeAt(index));
+                            final recordId = _uploadedFiles[index]['record_id'];
+                            if (recordId != null) {
+                              // 삭제 요청 보내고 결과 기다림
+                              ApiService.deleteCallRecord(recordId)
+                                  .then((res) {
+                                    if (res.statusCode == 200 ||
+                                        res.statusCode == 204) {
+                                      if (mounted) {
+                                        setState(
+                                          () => _uploadedFiles.removeAt(index),
+                                        );
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('삭제되었습니다.'),
+                                          ),
+                                        );
+                                      }
+                                    } else {
+                                      // 에러 났을 때 화면에 띄워주기
+                                      debugPrint('삭제 실패: ${res.statusCode}');
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              '삭제 서버 에러 (코드: ${res.statusCode})',
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                    }
+                                  })
+                                  .catchError((e) {
+                                    // 통신 터졌을 때
+                                    debugPrint('삭제 통신 에러: $e');
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('삭제 통신에 실패했습니다.'),
+                                        ),
+                                      );
+                                    }
+                                  });
+                            }
                           }
                         },
+
                         itemBuilder: (BuildContext context) => [
                           const PopupMenuItem(
                             value: 'edit',

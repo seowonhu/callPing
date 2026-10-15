@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'api_service.dart';
 
 class FindIdScreen extends StatefulWidget {
   const FindIdScreen({super.key});
@@ -18,9 +20,11 @@ class _FindIdScreenState extends State<FindIdScreen> {
   final TextEditingController emailController = TextEditingController();
   final TextEditingController codeController = TextEditingController();
 
+  String foundId = '';
+
   // 테스트용 인증번호 및 아이디
-  final String correctCode = '123456';
-  final String foundId = 'abcdefg1234';
+  //final String correctCode = '123456';
+  // final String foundId = 'abcdefg1234';
 
   @override
   void dispose() {
@@ -30,8 +34,10 @@ class _FindIdScreenState extends State<FindIdScreen> {
   }
 
   // 인증번호 발송
-  void sendCode() {
-    if (emailController.text.trim().isEmpty) {
+  Future<void> sendCode() async {
+    final email = emailController.text.trim();
+
+    if (email.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('이메일을 입력해주세요.'),
@@ -41,22 +47,44 @@ class _FindIdScreenState extends State<FindIdScreen> {
       return;
     }
 
-    setState(() {
-      currentStep = 1;
-      codeController.clear();
-    });
+    try {
+      final response = await ApiService.sendFindIdEmailCode(email);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('인증 코드가 발송되었습니다.'),
-        duration: Duration(seconds: 2),
-      ),
-    );
+      final responseData = jsonDecode(utf8.decode(response.bodyBytes));
+
+      if (response.statusCode == 200) {
+        setState(() {
+          currentStep = 1;
+          codeController.clear();
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(responseData['message'] ?? '인증 코드가 발송되었습니다.')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(responseData['message'] ?? '인증 코드 발송에 실패했습니다.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('서버와 연결할 수 없습니다.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
   }
 
   // 인증번호 확인
-  void verifyCode() {
-    if (codeController.text.trim().isEmpty) {
+  Future<void> verifyCode() async {
+    final email = emailController.text.trim();
+    final code = codeController.text.trim();
+
+    if (code.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('인증 코드를 입력해주세요.'),
@@ -66,16 +94,71 @@ class _FindIdScreenState extends State<FindIdScreen> {
       return;
     }
 
-    if (codeController.text.trim() == correctCode) {
-      // 인증 성공
-      setState(() {
-        currentStep = 2;
-      });
-    } else {
-      // 인증 실패
-      setState(() {
-        currentStep = 3;
-      });
+    try {
+      final response = await ApiService.verifyFindIdEmailCode(email, code);
+
+      final responseData = jsonDecode(utf8.decode(response.bodyBytes));
+
+      if (response.statusCode == 200) {
+        setState(() {
+          currentStep = 2;
+        });
+
+        await findId();
+      } else {
+        setState(() {
+          currentStep = 3;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(responseData['message'] ?? '인증 코드가 일치하지 않습니다.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('서버와 연결할 수 없습니다.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+
+  Future<void> findId() async {
+    final email = emailController.text.trim();
+
+    try {
+      final response = await ApiService.findId(email);
+
+      final responseData = jsonDecode(utf8.decode(response.bodyBytes));
+
+      if (response.statusCode == 200) {
+        final data = responseData['data'];
+
+        final loginId = data?['login_id'];
+
+        setState(() {
+          foundId = loginId ?? '';
+          currentStep = 2;
+        });
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(responseData['message'] ?? '아이디를 찾을 수 없습니다.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('서버와 연결할 수 없습니다.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
     }
   }
 

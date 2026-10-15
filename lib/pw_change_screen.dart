@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'api_service.dart';
 
 class PwChangeScreen extends StatefulWidget {
   const PwChangeScreen({super.key});
@@ -13,6 +15,7 @@ class _PwChangeScreenState extends State<PwChangeScreen> {
   final _confirmPwController = TextEditingController();
 
   bool _isComplete = false; // false: 입력 화면, true: 완료 화면
+  bool _isLoading = false;
   String? _errorText;
 
   @override
@@ -23,7 +26,7 @@ class _PwChangeScreenState extends State<PwChangeScreen> {
     super.dispose();
   }
 
-  void _onSubmit() {
+  Future<void> _onSubmit() async {
     if (_currentPwController.text.isEmpty ||
         _newPwController.text.isEmpty ||
         _confirmPwController.text.isEmpty) {
@@ -35,11 +38,36 @@ class _PwChangeScreenState extends State<PwChangeScreen> {
       return;
     }
 
-    // TODO: 실제 비밀번호 변경 API 연결
     setState(() {
+      _isLoading = true;
       _errorText = null;
-      _isComplete = true;
     });
+
+    try {
+      final response = await ApiService.changePassword(
+        _currentPwController.text,
+        _newPwController.text,
+      );
+      final body = jsonDecode(response.body);
+
+      if (body['success'] == true) {
+        setState(() {
+          _isComplete = true;
+        });
+      } else {
+        setState(() {
+          _errorText = body['message'] ?? '비밀번호 변경에 실패했습니다.';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _errorText = '네트워크 오류가 발생했습니다. 다시 시도해주세요.';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
   @override
@@ -104,17 +132,26 @@ class _PwChangeScreenState extends State<PwChangeScreen> {
             SizedBox(
               height: 55,
               child: ElevatedButton(
-                onPressed: _onSubmit,
+                onPressed: _isLoading ? null : _onSubmit,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.black,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
-                child: const Text(
-                  '다음',
-                  style: TextStyle(color: Colors.white, fontSize: 20),
-                ),
+                child: _isLoading
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : const Text(
+                        '다음',
+                        style: TextStyle(color: Colors.white, fontSize: 20),
+                      ),
               ),
             ),
             const SizedBox(height: 24),

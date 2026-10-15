@@ -131,7 +131,7 @@ class AccountScreen extends StatelessWidget {
                             final prefs = await SharedPreferences.getInstance();
                             await prefs.remove('access_token');
                           } catch (e) {
-                            print("로그아웃 통신 에러: $e");
+                            debugPrint("로그아웃 통신 에러: $e");
                           }
 
                           // 3. 팝업 포함 모든 스택 지우고 LoginScreen으로 이동
@@ -301,7 +301,7 @@ class _WithdrawalDialogState extends State<_WithdrawalDialog> {
                               // 백엔드 회원 탈퇴 API 주소 (예: DELETE /users 등 명세서에 맞게 수정)
                               final response = await http.delete(
                                 Uri.parse(
-                                  'http://localhost:8080/api/v1/users/me/account',
+                                  '${ApiService.baseUrl}/api/v1/users/me/account',
                                 ), // 백엔드 탈퇴 주소 확인 필요
                                 headers: {
                                   'Content-Type': 'application/json',
@@ -326,10 +326,10 @@ class _WithdrawalDialogState extends State<_WithdrawalDialog> {
                                 }
                               } else {
                                 // 실패했을 때 처리
-                                print("탈퇴 실패");
+                                debugPrint("탈퇴 실패");
                               }
                             } catch (e) {
-                              print("회원 탈퇴 통신 에러");
+                              debugPrint("회원 탈퇴 통신 에러");
                             }
                           }
                         : null,

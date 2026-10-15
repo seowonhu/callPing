@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'api_service.dart';
 
 class PermissionSettingScreen extends StatefulWidget {
@@ -22,78 +21,55 @@ class _PermissionSettingScreenState extends State<PermissionSettingScreen> {
     _fetchPermissions();
   }
 
-  // 1. 초기 권한 상태 불러오기
+  // ⬅️ 추가: 현재 권한 상태 조회
   Future<void> _fetchPermissions() async {
     try {
       final response = await ApiService.getPermissions();
-      if (response.statusCode == 200) {
-        final data = jsonDecode(utf8.decode(response.bodyBytes))['data'];
+      final body = jsonDecode(response.body);
+
+      if (body['success'] == true) {
         setState(() {
-          _fileUploadEnabled = data['file_upload_permission'] ?? false;
+          _fileUploadEnabled = body['data']['file_upload_permission'] ?? false;
           _pushNotificationEnabled =
-              data['push_notification_permission'] ?? false;
-          _isLoading = false;
+              body['data']['push_notification_permission'] ?? false;
         });
       }
     } catch (e) {
-      setState(() => _isLoading = false);
+      // 조회 실패해도 기본값(false)으로 화면은 그대로 표시
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
 
-  // 2. 권한 변경 사항을 서버에 저장
-  Future<void> _updateServerPermissions(
-    bool fileEnabled,
-    bool pushEnabled,
-  ) async {
+  // ⬅️ 추가: 토글 시 서버에 반영
+  Future<void> _updatePermissions() async {
     try {
-      await ApiService.updatePermissions(fileEnabled, pushEnabled);
+      final response = await ApiService.updatePermissions(
+        fileUploadPermission: _fileUploadEnabled,
+        pushNotificationPermission: _pushNotificationEnabled,
+      );
+      final body = jsonDecode(response.body);
+
+      if (body['success'] != true) {
+        // 서버 반영 실패 시 토글을 원래 상태로 되돌림
+        _showUpdateFailedSnackBar(body['message'] ?? '설정 변경에 실패했습니다.');
+      }
     } catch (e) {
-      print("권한 업데이트 실패: $e");
+      _showUpdateFailedSnackBar('네트워크 오류가 발생했습니다. 다시 시도해주세요.');
     }
   }
 
-  // 3. 푸시 알림 토글 시 OS 팝업 및 FCM 토큰 전송 로직
-  Future<void> _togglePushNotification(bool value) async {
-    if (value) {
-      // 켜기: OS 네이티브 팝업 요청
-      FirebaseMessaging messaging = FirebaseMessaging.instance;
-      NotificationSettings settings = await messaging.requestPermission(
-        alert: true,
-        badge: true,
-        sound: true,
-      );
-
-      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-        // 권한 허용됨 -> 서버에 권한 true 업데이트
-        setState(() => _pushNotificationEnabled = true);
-        _updateServerPermissions(_fileUploadEnabled, true);
-
-        // FCM 토큰 추출 및 전송
-        String? token = await messaging.getToken();
-        if (token != null) {
-          await ApiService.updateFcmToken(token);
-        }
-      } else {
-        // 권한 거부됨 -> 스위치 원상복구
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('기기 설정에서 푸시 알림 권한을 허용해주세요.')),
-          );
-        }
-      }
-    } else {
-      // 끄기: 서버에 권한 false 업데이트
-      setState(() => _pushNotificationEnabled = false);
-      _updateServerPermissions(_fileUploadEnabled, false);
-    }
+  void _showUpdateFailedSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -113,31 +89,43 @@ class _PermissionSettingScreenState extends State<PermissionSettingScreen> {
         ),
         centerTitle: true,
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
               children: [
-                _buildSettingItem(
-                  title: '파일 업로드 권한',
-                  value: _fileUploadEnabled,
-                  onChanged: (value) {
-                    setState(() => _fileUploadEnabled = value);
-                    _updateServerPermissions(value, _pushNotificationEnabled);
-                  },
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 16,
+                    ),
+                    children: [
+                      _buildSettingItem(
+                        title: '파일 업로드 권한',
+                        value: _fileUploadEnabled,
+                        onChanged: (value) {
+                          setState(() {
+                            _fileUploadEnabled = value;
+                          });
+                          _updatePermissions();
+                        },
+                      ),
+                      _buildSettingItem(
+                        title: '푸시 알림 권한',
+                        value: _pushNotificationEnabled,
+                        onChanged: (value) {
+                          setState(() {
+                            _pushNotificationEnabled = value;
+                          });
+                          _updatePermissions();
+                        },
+                      ),
+                    ],
+                  ),
                 ),
-                _buildSettingItem(
-                  title: '푸시 알림 권한',
-                  value: _pushNotificationEnabled,
-                  onChanged: _togglePushNotification,
-                ),
+                _buildBottomNavigationBar(),
               ],
             ),
-          ),
-          _buildBottomNavigationBar(),
-        ],
-      ),
     );
   }
 

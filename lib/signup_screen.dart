@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'api_service.dart'; 
-import 'terms_screen.dart'; // 약관 화면 임포트 주의 (해당 파일 분리되어 있다면)
+import 'api_service.dart';
+import 'terms_signup_screen.dart';
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -44,7 +44,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
       _showSnackBar('이메일을 입력해주세요.', Colors.redAccent);
       return;
     }
-    
+
     setState(() => _isLoading = true);
     try {
       final response = await ApiService.sendSignupEmailCode(email);
@@ -68,7 +68,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
   // 2. 이메일 인증 코드 검증 API 연동
   Future<void> verifyEmailCode() async {
     if (!emailCodeSent) return;
-    
+
     setState(() => _isLoading = true);
     try {
       final response = await ApiService.verifySignupEmailCode(
@@ -130,8 +130,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   void onPasswordChanged(String _) {
     setState(() {
-      showPwFormatError = pwController.text.isNotEmpty && !_isValidPassword(pwController.text);
-      showPwMismatchError = pwConfirmController.text.isNotEmpty &&
+      showPwFormatError =
+          pwController.text.isNotEmpty && !_isValidPassword(pwController.text);
+      showPwMismatchError =
+          pwConfirmController.text.isNotEmpty &&
           pwConfirmController.text != pwController.text;
     });
   }
@@ -139,7 +141,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
   Future<void> openTermsScreen() async {
     final bool? result = await Navigator.push<bool>(
       context,
-      MaterialPageRoute(builder: (context) => const TermsScreen()), // 기존 TermsScreen 활용
+      MaterialPageRoute(
+        builder: (context) => const TermsSignupScreen(),
+      ), // ⬅️ 변경: TermsScreen → TermsSignupScreen
     );
     if (result == true) {
       setState(() => agreedToTerms = true);
@@ -147,9 +151,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
   }
 
   void _showSnackBar(String message, Color color) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: color),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message), backgroundColor: color));
   }
 
   // 4. 최종 가입하기 API 연동
@@ -183,7 +187,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
         emailController.text.trim(),
       );
 
-      if (response.statusCode == 201) { // 201 Created 성공[cite: 1]
+      if (response.statusCode == 201) {
+        // 201 Created 성공
         if (mounted) {
           Navigator.push(
             context,
@@ -240,7 +245,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         keyboardType: TextInputType.emailAddress,
                         decoration: InputDecoration(
                           hintText: '이메일 계정',
-                          hintStyle: const TextStyle(color: Colors.black54, fontSize: 15),
+                          hintStyle: const TextStyle(
+                            color: Colors.black54,
+                            fontSize: 15,
+                          ),
                           filled: true,
                           fillColor: const Color(0xFFD9D9D9).withOpacity(0.4),
                           border: OutlineInputBorder(
@@ -259,9 +267,14 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.black,
                           padding: EdgeInsets.zero,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(5),
+                          ),
                         ),
-                        child: const Text('인증', style: TextStyle(color: Colors.white, fontSize: 13)),
+                        child: const Text(
+                          '인증',
+                          style: TextStyle(color: Colors.white, fontSize: 13),
+                        ),
                       ),
                     ),
                   ],
@@ -270,7 +283,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   const SizedBox(height: 6),
                   const Align(
                     alignment: Alignment.centerLeft,
-                    child: Text('인증 코드를 발송했습니다', style: TextStyle(color: Colors.black, fontSize: 13)),
+                    child: Text(
+                      '인증 코드를 발송했습니다',
+                      style: TextStyle(color: Colors.black, fontSize: 13),
+                    ),
                   ),
                   const SizedBox(height: 16),
                   Row(
@@ -281,7 +297,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
                           keyboardType: TextInputType.number,
                           decoration: InputDecoration(
                             hintText: '인증 코드',
-                            hintStyle: const TextStyle(color: Colors.black54, fontSize: 15),
+                            hintStyle: const TextStyle(
+                              color: Colors.black54,
+                              fontSize: 15,
+                            ),
                             filled: true,
                             fillColor: const Color(0xFFD9D9D9).withOpacity(0.4),
                             border: OutlineInputBorder(
@@ -300,9 +319,14 @@ class _SignUpScreenState extends State<SignUpScreen> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.black,
                             padding: EdgeInsets.zero,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(5),
+                            ),
                           ),
-                          child: const Text('확인', style: TextStyle(color: Colors.white, fontSize: 13)),
+                          child: const Text(
+                            '확인',
+                            style: TextStyle(color: Colors.white, fontSize: 13),
+                          ),
                         ),
                       ),
                     ],
@@ -311,7 +335,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     const SizedBox(height: 6),
                     const Align(
                       alignment: Alignment.centerLeft,
-                      child: Text('인증되었습니다', style: TextStyle(color: Colors.black, fontSize: 13)),
+                      child: Text(
+                        '인증되었습니다',
+                        style: TextStyle(color: Colors.black, fontSize: 13),
+                      ),
                     ),
                   ],
                 ],
@@ -324,7 +351,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         onChanged: (_) => setState(() => idChecked = false),
                         decoration: InputDecoration(
                           hintText: '아이디',
-                          hintStyle: const TextStyle(color: Colors.black54, fontSize: 15),
+                          hintStyle: const TextStyle(
+                            color: Colors.black54,
+                            fontSize: 15,
+                          ),
                           filled: true,
                           fillColor: const Color(0xFFD9D9D9).withOpacity(0.4),
                           border: OutlineInputBorder(
@@ -343,9 +373,14 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.black,
                           padding: EdgeInsets.zero,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(5),
+                          ),
                         ),
-                        child: const Text('중복 확인', style: TextStyle(color: Colors.white, fontSize: 11)),
+                        child: const Text(
+                          '중복 확인',
+                          style: TextStyle(color: Colors.white, fontSize: 11),
+                        ),
                       ),
                     ),
                   ],
@@ -368,7 +403,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   onChanged: onPasswordChanged,
                   decoration: InputDecoration(
                     hintText: '비밀번호',
-                    hintStyle: const TextStyle(color: Colors.black54, fontSize: 15),
+                    hintStyle: const TextStyle(
+                      color: Colors.black54,
+                      fontSize: 15,
+                    ),
                     filled: true,
                     fillColor: const Color(0xFFD9D9D9).withOpacity(0.4),
                     border: OutlineInputBorder(
@@ -385,7 +423,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 ),
                 if (showPwFormatError) ...[
                   const SizedBox(height: 6),
-                  const Text('비밀번호 형식에 맞게 입력해주세요', style: TextStyle(color: Colors.red, fontSize: 13)),
+                  const Text(
+                    '비밀번호 형식에 맞게 입력해주세요',
+                    style: TextStyle(color: Colors.red, fontSize: 13),
+                  ),
                 ],
                 const SizedBox(height: 20),
                 TextField(
@@ -394,7 +435,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   onChanged: onPasswordChanged,
                   decoration: InputDecoration(
                     hintText: '비밀번호 확인',
-                    hintStyle: const TextStyle(color: Colors.black54, fontSize: 15),
+                    hintStyle: const TextStyle(
+                      color: Colors.black54,
+                      fontSize: 15,
+                    ),
                     filled: true,
                     fillColor: const Color(0xFFD9D9D9).withOpacity(0.4),
                     border: OutlineInputBorder(
@@ -405,7 +449,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 ),
                 if (showPwMismatchError) ...[
                   const SizedBox(height: 6),
-                  const Text('비밀번호가 일치하지 않습니다', style: TextStyle(color: Colors.red, fontSize: 13)),
+                  const Text(
+                    '비밀번호가 일치하지 않습니다',
+                    style: TextStyle(color: Colors.red, fontSize: 13),
+                  ),
                 ],
                 const SizedBox(height: 30),
                 GestureDetector(
@@ -416,19 +463,31 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         width: 20,
                         height: 20,
                         decoration: ShapeDecoration(
-                          color: agreedToTerms ? Colors.black : const Color(0xFFE4E2E2),
+                          color: agreedToTerms
+                              ? Colors.black
+                              : const Color(0xFFE4E2E2),
                           shape: RoundedRectangleBorder(
                             side: const BorderSide(width: 1),
                             borderRadius: BorderRadius.circular(4),
                           ),
                         ),
-                        child: agreedToTerms ? const Icon(Icons.check, size: 14, color: Colors.white) : null,
+                        child: agreedToTerms
+                            ? const Icon(
+                                Icons.check,
+                                size: 14,
+                                color: Colors.white,
+                              )
+                            : null,
                       ),
                       const SizedBox(width: 10),
                       const Expanded(
                         child: Text(
                           '이용약관 및 개인정보 처리방침에 동의합니다',
-                          style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.w700),
+                          style: TextStyle(
+                            color: Colors.black,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                       const Icon(Icons.chevron_right, color: Colors.black),
@@ -443,11 +502,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     onPressed: _isLoading ? null : submitSignUp,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                     ),
-                    child: _isLoading 
+                    child: _isLoading
                         ? const CircularProgressIndicator(color: Colors.white)
-                        : const Text('가입하기', style: TextStyle(color: Colors.white, fontSize: 20)),
+                        : const Text(
+                            '가입하기',
+                            style: TextStyle(color: Colors.white, fontSize: 20),
+                          ),
                   ),
                 ),
                 const SizedBox(height: 30),
@@ -487,7 +551,11 @@ class _SignUpDoneScreen extends StatelessWidget {
                 const Text(
                   '가입이 완료되었습니다',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.black, fontSize: 17, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    color: Colors.black,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const SizedBox(height: 60),
                 SizedBox(
@@ -499,9 +567,14 @@ class _SignUpDoneScreen extends StatelessWidget {
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                     ),
-                    child: const Text('로그인 하러 가기', style: TextStyle(color: Colors.white, fontSize: 20)),
+                    child: const Text(
+                      '로그인 하러 가기',
+                      style: TextStyle(color: Colors.white, fontSize: 20),
+                    ),
                   ),
                 ),
               ],

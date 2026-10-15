@@ -51,6 +51,12 @@ class _LoginScreenState extends State<LoginScreen> {
         inputPassword,
       ).timeout(const Duration(seconds: 10));
 
+      // 서버가 어떤 상태 코드와 메시지를 주는지 터미널에 출력합니다.
+      print("===== 로그인 테스트 =====");
+      print("응답 상태 코드: ${response.statusCode}");
+      print("응답 데이터: ${response.body}");
+      print("=======================");
+
       if (response.statusCode == 200) {
         final responseData = jsonDecode(utf8.decode(response.bodyBytes));
 
@@ -86,9 +92,10 @@ class _LoginScreenState extends State<LoginScreen> {
           }
         }
       } else if (response.statusCode == 401) {
-        _showErrorPopup('비밀번호가 일치하지 않습니다.');
+        _showErrorPopup('아이디 및 비밀번호가 일치하지 않습니다.');
       } else if (response.statusCode == 403) {
-        _showErrorPopup('계정이 잠겼습니다. 이메일 인증으로 해제해주세요.');
+        // 403 에러 시 '비밀번호 찾기'가 있는 전용 팝업 호출
+        _showLockedPopup('계정이 잠겼습니다. 이메일 인증으로 해제해주세요.');
       } else if (response.statusCode == 404) {
         _showErrorPopup('가입되지 않은 회원 정보입니다.');
       } else {
@@ -118,6 +125,71 @@ class _LoginScreenState extends State<LoginScreen> {
             TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('확인', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // 계정 잠금 시 띄우는 팝업
+  void _showLockedPopup(String message) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text(
+            '계정 잠금',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          content: Text(message),
+          // 버튼 3개라 가로로 길어질 수 있으므로 column으로 세로 정렬
+          actions: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context); // 팝업 창 닫기
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const FindIdScreen(),
+                      ),
+                    );
+                  },
+                  child: const Text(
+                    '아이디 찾기',
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context); // 팝업 창 먼저 닫기
+                    // 비밀번호 찾기 화면으로 넘김
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const FindPwScreen(),
+                      ),
+                    );
+                  },
+                  child: const Text(
+                    '비밀번호 찾기',
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('취소', style: TextStyle(color: Colors.grey)),
+                ),
+              ],
             ),
           ],
         );

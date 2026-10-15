@@ -38,12 +38,11 @@ dependencies:
   http: ^1.6.0
   firebase_messaging: ^16.6.0
   firebase_core: ^4.14.0
-  
+  shared_preferences: ^2.5.5
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  file_picker: ^11.0.3 # 최신 버전에 맞게 사용하세요
-  shared_preferences: ^2.5.5
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
