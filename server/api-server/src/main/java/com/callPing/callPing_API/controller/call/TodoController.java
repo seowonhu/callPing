@@ -16,6 +16,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import java.util.Comparator;
 
 @RestController
 @RequestMapping("/todos")
@@ -42,6 +43,7 @@ public class TodoController {
         }
 
         List<TodoDTO> todoDTOs = todos.stream()
+                .sorted(Comparator.comparing(Todo::getId))
                 .map(t -> new TodoDTO(t.getId(),
                         t.getCallRecord() != null ? t.getCallRecord().getId() : null,
                         t.getCallRecord() != null ? t.getCallRecord().getFileName() : null,

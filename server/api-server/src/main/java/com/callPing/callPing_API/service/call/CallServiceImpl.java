@@ -25,6 +25,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
+import java.util.Comparator;
 
 @Slf4j
 @Service
@@ -98,6 +99,11 @@ public class CallServiceImpl implements CallService {
 
         List<TranscriptSegmentDTO> segments = callRecord.getTranscripts().stream()
                 .filter(t -> !t.isDeleted())
+                // 1015 DB 설정과 무관하게 무조건 orderIndex 오름차순으로 강제 정렬
+                .sorted(Comparator.comparing (
+                        (CallTranscript t)-> t.getOrderIndex() != null ? t.getOrderIndex() : Integer.MAX_VALUE
+                        ).thenComparing(CallTranscript::getId
+                ))
                 .map(t -> new TranscriptSegmentDTO(
                         t.getId(),
                         t.getSpeaker(),
@@ -164,6 +170,7 @@ public class CallServiceImpl implements CallService {
 
         // TODO들을 DTO로 변환
         List<TodoDTO> todoDTOs = todos.stream()
+                .sorted(Comparator.comparing(Todo::getId))
                 .map(t -> new TodoDTO(t.getId(),
                         record.getId(),
                         record.getFileName(),
