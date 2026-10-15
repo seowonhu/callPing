@@ -1,5 +1,6 @@
 package com.callPing.callPing_API.dto.request.call;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import jakarta.validation.constraints.NotBlank;
 
 /**
@@ -7,8 +8,9 @@ import jakarta.validation.constraints.NotBlank;
  * - PATCH /call-records/{record_id}/transcripts/{transcript_id}
  */
 public record TranscriptUpdateRequestDTO(
-        //                                           @NotBlank(message = "수정할 텍스트는 필수입니다.")
+        //    @NotBlank(message = "수정할 텍스트는 필수입니다.")
         String text,
         String speaker, // 화자 추가/변경을 위한 필드
-        Integer orderIndex // 드래그앤드롭
-) {}
+        @JsonAlias({"order_index", "orderIndex"}) Integer orderIndex // 드래그앤드롭
+)
+{}

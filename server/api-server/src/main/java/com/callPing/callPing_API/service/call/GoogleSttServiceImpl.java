@@ -4,6 +4,7 @@ import com.callPing.callPing_API.domain.call.CallRecord;
 import com.callPing.callPing_API.domain.call.CallTranscript;
 import com.google.cloud.speech.v1.*;
 import com.google.api.gax.longrunning.OperationFuture;
+import com.google.protobuf.Duration;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -57,18 +58,31 @@ public class GoogleSttServiceImpl implements GoogleSttService {
         SpeechRecognitionResult lastResult = response.getResults(response.getResultsCount() - 1);
         SpeechRecognitionAlternative alternative = lastResult.getAlternatives(0);
 
+        // 응답에 서브워드 기호(▁, _)가 포함되어 있는지 확인
+        boolean hasSubwordMarkers = alternative.getWordsList().stream()
+                .anyMatch(w -> {
+                    String raw = w.getWord();
+                    return raw.contains("▁") || raw.contains("\u2581") || raw.contains("_");
+                });
+
         StringBuilder currentSentence = new StringBuilder();
         int currentSpeakerTag = -1;
         String startTime = "00:00";
-        long lastWordEndTime = 1;
+        long lastWordEndTimeMs = -1;
 
         int orderIndex = 1000;
 
         for (WordInfo wordInfo : alternative.getWordsList()) {
             int wordSpeakerTag = wordInfo.getSpeakerTag();
+            String rawWord = wordInfo.getWord().trim();
+
+            boolean isWordStart = !hasSubwordMarkers
+                    || rawWord.startsWith("▁")
+                    || rawWord.startsWith("\u2581")
+                    || rawWord.startsWith("_");
 
             // 기호 제거 (언더바, 유니코드, 깍두기 기호 ▁ 모두 직접 치환)
-            String word = wordInfo.getWord()
+            String word = rawWord
                     .replace("_", "")
                     .replace("\u2581", "")
                     .replace("▁", "")
@@ -76,39 +90,50 @@ public class GoogleSttServiceImpl implements GoogleSttService {
 
             if (word.isEmpty()) continue;
 
-            long wordStartTime = wordInfo.getStartTime().getSeconds();
+            long wordStartTimeMs = toMillis(wordInfo.getStartTime());
+            long wordEndTimeMS = toMillis(wordInfo.getEndTime());
 
             if (currentSpeakerTag == -1) {
                 currentSpeakerTag = wordSpeakerTag;
-                startTime = formatTime(wordStartTime);
+                startTime = formatTime(wordInfo.getStartTime().getSeconds());
             }
 
-            // 2. 문장 끊는 조건 3개
+            // 2. 문장 끊는 조건 3개 => 5개
             boolean isSpeakerChanged = (currentSpeakerTag != wordSpeakerTag);
-            boolean isLongPause = (lastWordEndTime > 0 && (wordStartTime - lastWordEndTime) >= 2); // 2초 이상 침묵
-            boolean isPunctuation = word.matches(".*[.?!]$");
+            long pauseMs = (lastWordEndTimeMs >= 0) ? (wordStartTimeMs - lastWordEndTimeMs) : 0;
+            boolean isLongPause = (pauseMs>=800); // 2초 이상 침묵 => .8로 수정
+            boolean isMediumPauseOnLongSentence = (currentSentence.length() >= 40 && pauseMs >= 400);
 
-            // 화자가 바뀌었거나, 2초 이상 말이 없었을 때 강제 분리 ...
-            if (isSpeakerChanged || isLongPause) {
+            // 화자 변경 시 말풍선 분리
+            if (isSpeakerChanged || (isWordStart && (isLongPause || isMediumPauseOnLongSentence))) {
                 if (currentSentence.length() > 0) {
-                    transcripts.add(createTranscript(callRecord, currentSpeakerTag, startTime, currentSentence.toString().trim(), orderIndex));
+                    transcripts.add(createTranscript(callRecord, currentSpeakerTag,
+                            startTime, currentSentence.toString().trim(), orderIndex));
                     orderIndex += 1000;
                     currentSentence.setLength(0);
                 }
                 currentSpeakerTag = wordSpeakerTag;
-                startTime = formatTime(wordStartTime);
+                startTime = formatTime(wordInfo.getStartTime().getSeconds());
             }
 
-            currentSentence.append(word).append(" ");
-            lastWordEndTime = wordInfo.getEndTime().getSeconds();
+            if (currentSentence.length() > 0 && isWordStart){
+                currentSentence.append("");
+            }
+            currentSentence.append(word);
+
+            lastWordEndTimeMs = wordEndTimeMS;
+
+            //마침표 || 35자 이상 || 쉼표
+            boolean isPunctuation = word.matches(".*[.?!]$");
+            boolean isCommaOnLongSentence = (currentSentence.length() >= 35 && word.endsWith(","));
 
             // 구두점으로 끝났다면 저장하고 초기화
-            if (isPunctuation) {
+            if (isPunctuation || isCommaOnLongSentence) {
                 transcripts.add(createTranscript(callRecord, currentSpeakerTag, startTime, currentSentence.toString().trim(), orderIndex));
                 orderIndex += 1000;
                 currentSentence.setLength(0);
                 currentSpeakerTag = -1;
-                lastWordEndTime = 0;
+                lastWordEndTimeMs = 0;
             }
         }
 
@@ -118,6 +143,10 @@ public class GoogleSttServiceImpl implements GoogleSttService {
         }
 
         return transcripts;
+    }
+
+    private long toMillis (Duration duration) {
+        return duration.getSeconds() * 1000L + (duration.getNanos() / 1_000_000L);
     }
 
     private CallTranscript createTranscript(CallRecord callRecord, int speakerTag, String timestampOffset, String text, int orderIndex) {
