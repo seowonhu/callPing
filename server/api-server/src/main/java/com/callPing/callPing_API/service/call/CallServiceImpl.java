@@ -49,6 +49,7 @@ public class CallServiceImpl implements CallService {
                 .map(record -> new CallRecordListResponseDTO(
                         record.getId(),
                         record.getCallerName(),
+                        record.getFileName(),
                         record.getUploadTime(),
                         record.getAnalysisStatus()
                 ));
@@ -142,6 +143,7 @@ public class CallServiceImpl implements CallService {
         return new CallDetailsResponseDTO(
                 record.getId(),
                 record.getCallerName(),
+                record.getFileName(),
                 record.getUploadTime(),
                 record.getAnalysisStatus(),
                 segments
@@ -162,7 +164,13 @@ public class CallServiceImpl implements CallService {
 
         // TODO들을 DTO로 변환
         List<TodoDTO> todoDTOs = todos.stream()
-                .map(t -> new TodoDTO(t.getId(), t.getTaskType(), t.getDescription(), t.getPriority(), t.getStatus()))
+                .map(t -> new TodoDTO(t.getId(),
+                        record.getId(),
+                        record.getFileName(),
+                        t.getTaskType(),
+                        t.getDescription(),
+                        t.getPriority(),
+                        t.getStatus()))
                 .collect(Collectors.toList());
 
         String summary = "총 " + todos.size() + "건의 후속 조치가 필요합니다.";
@@ -293,19 +301,18 @@ public class CallServiceImpl implements CallService {
             String improvement = feedbackNode.path("improvement_points").asText("");
             if (improvement.isBlank()) improvement = feedbackNode.path("improvementPoints").asText("");
 
-            // 3. 피드백 문자열 조합 (빈 껍데기 " / 개선점: " 방지)
-            String feedback = speechFeedback;
-            if (!improvement.isBlank()) {
-                feedback += (feedback.isBlank() ? "" : " / 개선점: ") + improvement;
-            }
+            // 3. summary와 feedback 역할 분리 (1015 todo_summary 중복 제거)
+            String summary = rootNode.path("summary").asText("");
+            if (summary.isBlank()) summary = feedbackNode.path("summary").asText("");
+            if (summary.isBlank()) summary = speechFeedback;
+            if (summary.isBlank()) summary = "요약 정보가 없습니다.";
 
-            // 값이 없을 때의 깔끔한 기본값
-            if (expression.isBlank()) expression = "표현 분석 결과가 없습니다.";
+            // feedback 필드에는 구체적인 개선점(improvement_points)을 배치 (없을 경우에만 speechFeedback 사용)
+            String feedback = !improvement.isBlank() ? improvement : speechFeedback;
             if (feedback.isBlank()) feedback = "피드백 내용이 없습니다.";
 
-            // 요약 추출
-            String summary = rootNode.path("todo_summary").asText("");
-            if (summary.isBlank()) summary = rootNode.path("todoSummary").asText("요약 정보가 없습니다.");
+            if (expression.isBlank()) expression = "표현 분석 결과가 없습니다.";
+
             String keywords = "미제공";
 
             // DB 업데이트

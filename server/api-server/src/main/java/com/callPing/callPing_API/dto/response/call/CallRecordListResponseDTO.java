@@ -10,6 +10,7 @@ import java.time.OffsetDateTime;
 public record CallRecordListResponseDTO(
         Long recordId,
         String callerName,
+        String recordTitle,
         OffsetDateTime uploadTime,
         String analysisStatus
 ) {}

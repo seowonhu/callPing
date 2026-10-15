@@ -27,6 +27,7 @@ public class TodoController {
 
     // 8-1. 사용자 전체 TODO 목록 조회 (상태 필터링 포함)
     @GetMapping
+    @Transactional(readOnly = true)
     public ResponseEntity<List<TodoDTO>> getMyTodos(
             @RequestParam(required = false) String status, // 프론트 명세: 상태 필터링 옵션
             @AuthenticationPrincipal UserPrincipal userDetails) {
@@ -41,7 +42,13 @@ public class TodoController {
         }
 
         List<TodoDTO> todoDTOs = todos.stream()
-                .map(t -> new TodoDTO(t.getId(), t.getTaskType(), t.getDescription(), t.getPriority(), t.getStatus()))
+                .map(t -> new TodoDTO(t.getId(),
+                        t.getCallRecord() != null ? t.getCallRecord().getId() : null,
+                        t.getCallRecord() != null ? t.getCallRecord().getFileName() : null,
+                        t.getTaskType(),
+                        t.getDescription(),
+                        t.getPriority(),
+                        t.getStatus()))
                 .collect(Collectors.toList());
 
         return ResponseEntity.ok(todoDTOs);
@@ -73,7 +80,14 @@ public class TodoController {
 
         todoRepository.save(newTodo);
 
-        return ResponseEntity.ok(new TodoDTO(newTodo.getId(), newTodo.getTaskType(), newTodo.getDescription(), newTodo.getPriority(), newTodo.getStatus()));
+        return ResponseEntity.ok(new TodoDTO(
+                newTodo.getId(),
+                callRecord != null ? callRecord.getId() : null,
+                callRecord != null ? callRecord.getFileName() : null,
+                newTodo.getTaskType(),
+                newTodo.getDescription(),
+                newTodo.getPriority(),
+                newTodo.getStatus()));
     }
 
     // 8-3. TODO 내용 및 상태 수정 (PATCH)
@@ -94,7 +108,14 @@ public class TodoController {
                 request.get("priority")
         );
 
-        return ResponseEntity.ok(new TodoDTO(todo.getId(), todo.getTaskType(), todo.getDescription(), todo.getPriority(), todo.getStatus()));
+        return ResponseEntity.ok(new TodoDTO(
+                todo.getId(),
+                todo.getCallRecord() != null ? todo.getCallRecord().getId() : null,
+                todo.getCallRecord() != null ? todo.getCallRecord().getFileName() : null,
+                todo.getTaskType(),
+                todo.getDescription(),
+                todo.getPriority(),
+                todo.getStatus()));
     }
 
     // 8-4. TODO 삭제 (DELETE)
