@@ -311,8 +311,13 @@ public class CallServiceImpl implements CallService {
             // 3. summary와 feedback 역할 분리 (1015 todo_summary 중복 제거)
             String summary = rootNode.path("summary").asText("");
             if (summary.isBlank()) summary = feedbackNode.path("summary").asText("");
-            if (summary.isBlank()) summary = speechFeedback;
-            if (summary.isBlank()) summary = "요약 정보가 없습니다.";
+            if (summary.isBlank()) summary = rootNode.path("call_summary").asText("");
+            if (summary.isBlank()) summary = feedbackNode.path("call_summary").asText("");
+
+            // 만약 AI가 여전히 summary를 안 보내준다면 speechFeedback과 중복되므로 기본 안내 문구 처리
+            if (summary.isBlank()) {
+                summary = "AI 요약 본문이 없습니다.";
+            }
 
             // feedback 필드에는 구체적인 개선점(improvement_points)을 배치 (없을 경우에만 speechFeedback 사용)
             String feedback = !improvement.isBlank() ? improvement : speechFeedback;
