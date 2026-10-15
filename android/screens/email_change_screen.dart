@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'api_service.dart';
 
 enum _EmailStep { input, verify, complete }
 
@@ -15,10 +17,16 @@ class _EmailChangeScreenState extends State<EmailChangeScreen> {
 
   _EmailStep _step = _EmailStep.input;
   String? _errorText;
-  bool _codeVerified = false;
+  bool _isLoading = false;
 
-  // 실제로는 서버에서 받아온 값이 들어감
-  final String _currentEmail = 'user@email.com';
+  String _currentEmail = '';
+  bool _isFetchingEmail = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchCurrentEmail();
+  }
 
   @override
   void dispose() {
@@ -27,34 +35,101 @@ class _EmailChangeScreenState extends State<EmailChangeScreen> {
     super.dispose();
   }
 
-  void _onSendCode() {
+  //  현재 이메일 조회
+  // getMe 정의 오류
+  Future<void> _fetchCurrentEmail() async {
+    try {
+      final response = await ApiService.getMe();
+      final body = jsonDecode(response.body);
+      if (body['success'] == true) {
+        setState(() {
+          _currentEmail = body['data']['email'] ?? '';
+        });
+      }
+    } catch (e) {
+      // 조회 실패해도 화면은 그대로 두고, 아래 입력 흐름은 계속 진행 가능
+    } finally {
+      setState(() {
+        _isFetchingEmail = false;
+      });
+    }
+  }
+
+  Future<void> _onSendCode() async {
     if (_newEmailController.text.isEmpty ||
         !_newEmailController.text.contains('@')) {
       setState(() => _errorText = '올바른 이메일 주소를 입력해주세요.');
       return;
     }
-    // TODO: 실제 인증 코드 발송 API 연결
-    setState(() {
-      _errorText = null;
-      _step = _EmailStep.verify;
-    });
-  }
 
-  void _onVerifyCode() {
-    // TODO: 실제 인증 코드 검증 API 연결 (임시로 '123456'만 성공 처리)
-    if (_codeController.text == '123456') {
-      setState(() => _codeVerified = true);
-    } else {
-      setState(() => _codeVerified = false);
+    setState(() {
+      _isLoading = true;
+      _errorText = null;
+    });
+
+    try {
+      final response = await ApiService.sendEmailChangeCode(
+        _currentEmail,
+        _newEmailController.text,
+      );
+      final body = jsonDecode(response.body);
+
+      if (body['success'] == true) {
+        setState(() {
+          _step = _EmailStep.verify;
+        });
+      } else {
+        setState(() {
+          _errorText = body['message'] ?? '인증 코드 발송에 실패했습니다.';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _errorText = '네트워크 오류가 발생했습니다. 다시 시도해주세요.';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
 
-  void _onNextAfterVerify() {
-    if (!_codeVerified) {
-      setState(() {}); // 에러 문구 표시 트리거
+  // ⬅️ 변경: 코드 6자리 입력마다 검증하지 않고, '다음' 버튼에서 한 번에 검증 + 이메일 변경까지 처리
+  Future<void> _onVerifyCode() async {
+    if (_codeController.text.length != 6) {
+      setState(() => _errorText = '6자리 인증 코드를 입력해주세요.');
       return;
     }
-    setState(() => _step = _EmailStep.complete);
+
+    setState(() {
+      _isLoading = true;
+      _errorText = null;
+    });
+
+    try {
+      final response = await ApiService.verifyEmailChangeCode(
+        _codeController.text,
+      );
+      final body = jsonDecode(response.body);
+
+      if (body['success'] == true) {
+        setState(() {
+          _step = _EmailStep.complete;
+        });
+      } else {
+        setState(() {
+          _errorText = body['message'] ?? '인증 코드가 일치하지 않거나 만료되었습니다.';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _errorText = '네트워크 오류가 발생했습니다. 다시 시도해주세요.';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
   @override
@@ -110,7 +185,7 @@ class _EmailChangeScreenState extends State<EmailChangeScreen> {
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
-                _currentEmail,
+                _isFetchingEmail ? '불러오는 중...' : _currentEmail,
                 style: const TextStyle(color: Colors.black54, fontSize: 15),
               ),
             ),
@@ -156,17 +231,26 @@ class _EmailChangeScreenState extends State<EmailChangeScreen> {
             SizedBox(
               height: 55,
               child: ElevatedButton(
-                onPressed: _onSendCode,
+                onPressed: _isLoading ? null : _onSendCode,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.black,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
-                child: const Text(
-                  '다음',
-                  style: TextStyle(color: Colors.white, fontSize: 20),
-                ),
+                child: _isLoading
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : const Text(
+                        '다음',
+                        style: TextStyle(color: Colors.white, fontSize: 20),
+                      ),
               ),
             ),
             const SizedBox(height: 24),
@@ -177,7 +261,7 @@ class _EmailChangeScreenState extends State<EmailChangeScreen> {
   }
 
   // -----------------------------------------------------------
-  // 2단계: 인증 코드 입력 (입력/성공/실패 문구는 상태로 전환)
+  // 2단계: 인증 코드 입력
   // -----------------------------------------------------------
   Widget _buildVerifyView() {
     return SafeArea(
@@ -203,33 +287,41 @@ class _EmailChangeScreenState extends State<EmailChangeScreen> {
                 counterText: '',
                 border: UnderlineInputBorder(),
               ),
-              onChanged: (_) => _onVerifyCode(),
+              // ⬅ 삭제: onChanged: (_) => _onVerifyCode() — 매 입력마다 서버 호출하지 않도록 제거
             ),
-            const SizedBox(height: 12),
-            if (_codeController.text.length == 6)
+            if (_errorText != null) ...[
+              // ⬅ 변경: _codeVerified 대신 서버 에러 메시지 표시
+              const SizedBox(height: 12),
               Text(
-                _codeVerified ? '인증되었습니다' : '인증 코드가 일치하지 않습니다',
+                _errorText!,
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: _codeVerified ? Colors.black : Colors.red,
-                  fontSize: 15,
-                ),
+                style: const TextStyle(color: Colors.red, fontSize: 15),
               ),
+            ],
             const Spacer(),
             SizedBox(
               height: 55,
               child: ElevatedButton(
-                onPressed: _onNextAfterVerify,
+                onPressed: _isLoading ? null : _onVerifyCode,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.black,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
-                child: const Text(
-                  '다음',
-                  style: TextStyle(color: Colors.white, fontSize: 20),
-                ),
+                child: _isLoading
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : const Text(
+                        '다음',
+                        style: TextStyle(color: Colors.white, fontSize: 20),
+                      ),
               ),
             ),
             const SizedBox(height: 24),
@@ -276,7 +368,6 @@ class _EmailChangeScreenState extends State<EmailChangeScreen> {
               height: 55,
               child: ElevatedButton(
                 onPressed: () {
-                  // 계정관리 화면으로 복귀
                   Navigator.pop(context);
                 },
                 style: ElevatedButton.styleFrom(

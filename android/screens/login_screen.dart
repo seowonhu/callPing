@@ -45,40 +45,64 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // ⭐️ ApiService를 통한 깔끔한 통신
+      // ApiService를 통한 통신
       final response = await ApiService.login(
         inputId,
         inputPassword,
       ).timeout(const Duration(seconds: 10));
+
+      // 서버가 어떤 상태 코드와 메시지를 주는지 터미널에 출력합니다.
+      print("===== 로그인 테스트 =====");
+      print("응답 상태 코드: ${response.statusCode}");
+      print("응답 데이터: ${response.body}");
+      print("=======================");
 
       if (response.statusCode == 200) {
         final responseData = jsonDecode(utf8.decode(response.bodyBytes));
 
         // 명세서에 따른 데이터 접근
         final data = responseData['data'];
-        if (data != null && data['refresh_token'] != null) {
-          String token = data['refresh_token']; // 임시로 리프레시 토큰을 액세스 토큰으로 사용
 
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('access_token', token);
+        if (data != null) {
+          String accessToken =
+              data['access_token'] ??
+              data['accessToken'] ??
+              data['refresh_token'] ??
+              '';
+          String refreshToken = data['refresh_token'] ?? '';
 
-          if (mounted) {
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(builder: (context) => const HomeScreen()),
-            );
+          if (accessToken.isNotEmpty) {
+            final prefs = await SharedPreferences.getInstance();
+
+            // 기기에 두 개의 토큰 저장
+            await prefs.setString('access_token', accessToken);
+            await prefs.setString('refresh_token', refreshToken);
+
+            print("정상적으로 저장된 Access 토큰 : $accessToken");
+            print("정상적으로 저장된 Refresh 토큰 : $refreshToken"); // 토큰 값 확인용 로그
+
+            if (mounted) {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => const HomeScreen()),
+              );
+            }
+          } else {
+            _showErrorPopup('로그인에 성공했으나 서버에서 토큰을 받지 못했습니다.');
           }
         }
       } else if (response.statusCode == 401) {
-        _showErrorPopup('비밀번호가 일치하지 않습니다.');
+        _showErrorPopup('아이디 및 비밀번호가 일치하지 않습니다.');
       } else if (response.statusCode == 403) {
-        _showErrorPopup('계정이 잠겼습니다. 이메일 인증으로 해제해주세요.');
+        // 403 에러 시 '비밀번호 찾기'가 있는 전용 팝업 호출
+        _showLockedPopup('계정이 잠겼습니다. 이메일 인증으로 해제해주세요.');
       } else if (response.statusCode == 404) {
         _showErrorPopup('가입되지 않은 회원 정보입니다.');
       } else {
         _showErrorPopup('로그인에 실패했습니다.');
       }
     } catch (e) {
+      print("통신 에러: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('서버와 연결할 수 없습니다. 다시 시도해주세요.'),
@@ -101,6 +125,71 @@ class _LoginScreenState extends State<LoginScreen> {
             TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('확인', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // 계정 잠금 시 띄우는 팝업
+  void _showLockedPopup(String message) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text(
+            '계정 잠금',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          content: Text(message),
+          // 버튼 3개라 가로로 길어질 수 있으므로 column으로 세로 정렬
+          actions: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context); // 팝업 창 닫기
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const FindIdScreen(),
+                      ),
+                    );
+                  },
+                  child: const Text(
+                    '아이디 찾기',
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context); // 팝업 창 먼저 닫기
+                    // 비밀번호 찾기 화면으로 넘김
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const FindPwScreen(),
+                      ),
+                    );
+                  },
+                  child: const Text(
+                    '비밀번호 찾기',
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('취소', style: TextStyle(color: Colors.grey)),
+                ),
+              ],
             ),
           ],
         );

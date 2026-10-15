@@ -1,18 +1,72 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'api_service.dart';
 
 class PermissionSettingScreen extends StatefulWidget {
-  // 추가: Stateless → Stateful
   const PermissionSettingScreen({super.key});
 
   @override
   State<PermissionSettingScreen> createState() =>
-      _PermissionSettingScreenState(); // ⬅️ 추가
+      _PermissionSettingScreenState();
 }
 
 class _PermissionSettingScreenState extends State<PermissionSettingScreen> {
-  // 추가: 토글 상태를 저장할 변수 두 개
   bool _fileUploadEnabled = false;
   bool _pushNotificationEnabled = false;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchPermissions();
+  }
+
+  // ⬅️ 추가: 현재 권한 상태 조회
+  Future<void> _fetchPermissions() async {
+    try {
+      final response = await ApiService.getPermissions();
+      final body = jsonDecode(response.body);
+
+      if (body['success'] == true) {
+        setState(() {
+          _fileUploadEnabled = body['data']['file_upload_permission'] ?? false;
+          _pushNotificationEnabled =
+              body['data']['push_notification_permission'] ?? false;
+        });
+      }
+    } catch (e) {
+      // 조회 실패해도 기본값(false)으로 화면은 그대로 표시
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  // ⬅️ 추가: 토글 시 서버에 반영
+  Future<void> _updatePermissions() async {
+    try {
+      final response = await ApiService.updatePermissions(
+        fileUploadPermission: _fileUploadEnabled,
+        pushNotificationPermission: _pushNotificationEnabled,
+      );
+      final body = jsonDecode(response.body);
+
+      if (body['success'] != true) {
+        // 서버 반영 실패 시 토글을 원래 상태로 되돌림
+        _showUpdateFailedSnackBar(body['message'] ?? '설정 변경에 실패했습니다.');
+      }
+    } catch (e) {
+      _showUpdateFailedSnackBar('네트워크 오류가 발생했습니다. 다시 시도해주세요.');
+    }
+  }
+
+  void _showUpdateFailedSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -35,44 +89,46 @@ class _PermissionSettingScreenState extends State<PermissionSettingScreen> {
         ),
         centerTitle: true,
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
               children: [
-                _buildSettingItem(
-                  title: '파일 업로드 권한',
-                  value: _fileUploadEnabled, // ⬅️ 추가
-                  onChanged: (value) {
-                    // ⬅️ 추가
-                    setState(() {
-                      _fileUploadEnabled = value;
-                    });
-                    // TODO: 실제 파일 업로드 권한 요청/해제 로직
-                  },
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 16,
+                    ),
+                    children: [
+                      _buildSettingItem(
+                        title: '파일 업로드 권한',
+                        value: _fileUploadEnabled,
+                        onChanged: (value) {
+                          setState(() {
+                            _fileUploadEnabled = value;
+                          });
+                          _updatePermissions();
+                        },
+                      ),
+                      _buildSettingItem(
+                        title: '푸시 알림 권한',
+                        value: _pushNotificationEnabled,
+                        onChanged: (value) {
+                          setState(() {
+                            _pushNotificationEnabled = value;
+                          });
+                          _updatePermissions();
+                        },
+                      ),
+                    ],
+                  ),
                 ),
-                _buildSettingItem(
-                  title: '푸시 알림 권한',
-                  value: _pushNotificationEnabled, // ⬅️ 추가
-                  onChanged: (value) {
-                    // ⬅️ 추가
-                    setState(() {
-                      _pushNotificationEnabled = value;
-                    });
-                    // TODO: 실제 푸시 알림 권한 요청/해제 로직
-                  },
-                ),
+                _buildBottomNavigationBar(),
               ],
             ),
-          ),
-          _buildBottomNavigationBar(),
-        ],
-      ),
     );
   }
 
-  // ⬅️ 변경: onTap(VoidCallback) 대신 value + onChanged로 교체
   Widget _buildSettingItem({
     required String title,
     required bool value,
@@ -84,8 +140,7 @@ class _PermissionSettingScreenState extends State<PermissionSettingScreen> {
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: Row(
-            mainAxisAlignment:
-                MainAxisAlignment.spaceBetween, // ⬅️ 추가: 제목-토글 양끝 정렬
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
                 title,
@@ -96,10 +151,9 @@ class _PermissionSettingScreenState extends State<PermissionSettingScreen> {
                 ),
               ),
               Switch(
-                // ⬅️ 추가: 토글 스위치
                 value: value,
                 onChanged: onChanged,
-                activeColor: const Color(0xFF1A9000), // 콜핑 포인트 컬러(설정 탭 선택색)와 통일
+                activeColor: const Color(0xFF1A9000),
               ),
             ],
           ),
