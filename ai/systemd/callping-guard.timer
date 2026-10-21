@@ -1,0 +1,7 @@
+[Unit]
+Description=CallPing guard every 5min
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+[Install]
+WantedBy=timers.target

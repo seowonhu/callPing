@@ -1,0 +1,17 @@
+[Unit]
+Description=CallPing LoRA API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/callping/app
+Environment="HF_HOME=%h/callping/hf_cache"
+Environment="TORCH_HOME=%h/callping/.torch"
+Environment="TRITON_CACHE_DIR=%h/callping/.triton"
+Environment="CUDA_CACHE_PATH=%h/callping/.nv"
+ExecStart=%h/callping/venv/bin/uvicorn app:app --host 0.0.0.0 --port <PORT>
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
