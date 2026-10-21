@@ -1,0 +1,17 @@
+# 비밀 · 설정 (실제 값)
+.env
+*.env
+*.key
+
+# 실행 중 생기는 것 — 이벤트 캡처에는 통화 전사본(개인정보)이 들어 있다
+logs/
+events/
+
+# 모델 · 데이터 (저장소에 넣지 않는다)
+adapter/
+hf_cache/
+data/
+*.jsonl
+
+# 파이썬
+__pycache__/

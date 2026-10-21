@@ -1,0 +1,5 @@
+[Unit]
+Description=CallPing AWS reachability guard
+[Service]
+Type=oneshot
+ExecStart=%h/callping/guard.sh

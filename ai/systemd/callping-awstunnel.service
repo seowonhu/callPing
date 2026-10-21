@@ -1,0 +1,12 @@
+[Unit]
+Description=CallPing reverse SSH tunnel to AWS
+After=network.target callping-api.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ssh -N -i <SSH_KEY> -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -R <REMOTE_PORT>:127.0.0.1:<PORT> <USER>@<HOST>
+Restart=always
+RestartSec=300
+
+[Install]
+WantedBy=default.target
