@@ -51,10 +51,28 @@ public class GoogleSttServiceImpl implements GoogleSttService {
     private List<CallTranscript> groupWordsIntoSentences(LongRunningRecognizeResponse response, CallRecord callRecord) {
         List<CallTranscript> transcripts = new ArrayList<>();
 
+        if (response.getResultsList().isEmpty()) {
+            System.out.println("[STT 진단] 결과 리스트가 비어있습니다!");
+            return transcripts;
+        }
+
         if (response.getResultsList().isEmpty()) return transcripts;
+
+        //  STT 진단 1. 전체 Result 개수 확인 (화자 분리 데이터는 항상 마지막 Result에 들어있음)
+        System.out.println("==========================================");
+        System.out.println("[STT 진단] 총 Result 블록 개수: " + response.getResultsCount());
 
         SpeechRecognitionResult lastResult = response.getResults(response.getResultsCount() - 1);
         SpeechRecognitionAlternative alternative = lastResult.getAlternatives(0);
+
+        // STT 진단 2. 구글이 매긴 화자 태그 분포 확인
+        long speaker1Count = alternative.getWordsList().stream().filter(w -> w.getSpeakerTag() == 1).count();
+        long speaker2Count = alternative.getWordsList().stream().filter(w -> w.getSpeakerTag() == 2).count();
+        long speaker0Count = alternative.getWordsList().stream().filter(w -> w.getSpeakerTag() == 0).count();
+
+        System.out.println(String.format("[STT 진단] 총 단어 수: %d | 화자1: %d개, 화자2: %d개, 미분류(0): %d개",
+                alternative.getWordsCount(), speaker1Count, speaker2Count, speaker0Count));
+        System.out.println("==========================================");
 
         StringBuilder currentSentence = new StringBuilder();
         int currentSpeakerTag = -1;
@@ -89,6 +107,10 @@ public class GoogleSttServiceImpl implements GoogleSttService {
             long wordStartTimeMs = toMillis(wordInfo.getStartTime());
             long wordEndTimeMs = toMillis(wordInfo.getEndTime());
             long pauseMs = (lastWordEndTimeMs >= 0) ? (wordStartTimeMs - lastWordEndTimeMs) : 0;
+
+            // 테스트 진단 3. 단어별 원본 데이터 출력 (화자태그 / 침묵시간 / 원본단어)
+            System.out.println(String.format("[단어] 화자:%d | 침묵:%4dms | 시간:%5dms~%5dms | 원본:'%s'",
+                    wordInfo.getSpeakerTag(), pauseMs, wordStartTimeMs, wordEndTimeMs, rawWord));
 
             int wordSpeakerTag = wordInfo.getSpeakerTag() > 0 ? wordInfo.getSpeakerTag() : 1;
 
@@ -167,4 +189,5 @@ public class GoogleSttServiceImpl implements GoogleSttService {
         long seconds = totalSeconds % 60;
         return String.format("%02d:%02d", minutes, seconds);
     }
+
 }
