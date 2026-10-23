@@ -18,32 +18,33 @@ public class GoogleSttServiceImpl implements GoogleSttService {
 
         try (SpeechClient speechClient = SpeechClient.create()) {
 
-            // 1. 화자 분리 설정 (1:1 통화 최적화)
+            // 1. STT 환경 설정
             SpeakerDiarizationConfig diarizationConfig = SpeakerDiarizationConfig.newBuilder()
                     .setEnableSpeakerDiarization(true)
                     .setMinSpeakerCount(2)
-                    .setMaxSpeakerCount(2)
+                    .setMaxSpeakerCount(3)
                     .build();
 
-            // 전화 통화 인식률 최대화 => 최신 장문 모델(latest_long) 및 전화 오디오 클래스 적용
             RecognitionConfig config = RecognitionConfig.newBuilder()
                     .setLanguageCode("ko-KR")
-                    .setModel("latest_long")
-                    .setAudioChannelCount(1)
-                    .setEnableAutomaticPunctuation(true)
-                    .setEnableWordTimeOffsets(true)
+                    .setModel("telephony")
+                    .setEnableAutomaticPunctuation(true) // 구두점 자동 생성
+                    .setEnableWordTimeOffsets(true)      // 타임스탬프 활성화
                     .setDiarizationConfig(diarizationConfig)
                     .build();
 
             RecognitionAudio audio = RecognitionAudio.newBuilder()
-                    .setUri(gcsUri)
+                    .setUri(gcsUri) // GCS URI 사용
                     .build();
 
+            // 2. 비동기 요청 호출
             OperationFuture<LongRunningRecognizeResponse, LongRunningRecognizeMetadata> response =
                     speechClient.longRunningRecognizeAsync(config, audio);
 
+            // 완료될 때까지 대기
             LongRunningRecognizeResponse longRunningResponse = response.get();
 
+            // 3. 단어 -> 문장 조합 로직
             return groupWordsIntoSentences(longRunningResponse, callRecord);
         }
     }
@@ -56,9 +57,7 @@ public class GoogleSttServiceImpl implements GoogleSttService {
             return transcripts;
         }
 
-        if (response.getResultsList().isEmpty()) return transcripts;
-
-        //  STT 진단 1. 전체 Result 개수 확인 (화자 분리 데이터는 항상 마지막 Result에 들어있음)
+        // STT 진단 1. 전체 Result 개수 확인 (화자 분리 데이터는 항상 마지막 Result에 들어있음)
         System.out.println("==========================================");
         System.out.println("[STT 진단] 총 Result 블록 개수: " + response.getResultsCount());
 
@@ -74,28 +73,30 @@ public class GoogleSttServiceImpl implements GoogleSttService {
                 alternative.getWordsCount(), speaker1Count, speaker2Count, speaker0Count));
         System.out.println("==========================================");
 
+        // 응답에 서브워드 기호(▁, _)가 포함되어 있는지 확인
+        boolean hasSubwordMarkers = alternative.getWordsList().stream()
+                .anyMatch(w -> {
+                    String raw = w.getWord();
+                    return raw.contains("▁") || raw.contains("\u2581") || raw.contains("_");
+                });
+
         StringBuilder currentSentence = new StringBuilder();
         int currentSpeakerTag = -1;
         String startTime = "00:00";
         long lastWordEndTimeMs = -1;
-        boolean prevEndedWithConnector = false;
 
         int orderIndex = 1000;
 
-        long distinctSpeakers = alternative.getWordsList().stream()
-                .mapToInt(WordInfo::getSpeakerTag)
-                .distinct()
-                .count();
-        boolean isDiarizationCollapsed = (distinctSpeakers <= 1);
-        int fallbackSpeaker = 1;
-
         for (WordInfo wordInfo : alternative.getWordsList()) {
             String rawWord = wordInfo.getWord().trim();
-            if (rawWord.isEmpty()) continue;
 
-            boolean startsWithUnderscore = rawWord.startsWith("_") || rawWord.startsWith("▁") || rawWord.startsWith("\u2581");
-            boolean endsWithUnderscore = rawWord.endsWith("_") || rawWord.endsWith("▁") || rawWord.endsWith("\u2581");
+            // 1: 기호를 지우기 전에 '새 단어 시작(▁)'인지 체크
+            boolean isWordStart = !hasSubwordMarkers
+                    || rawWord.startsWith("▁")
+                    || rawWord.startsWith("\u2581")
+                    || rawWord.startsWith("_");
 
+            // 기호 제거
             String word = rawWord
                     .replace("_", "")
                     .replace("\u2581", "")
@@ -104,6 +105,7 @@ public class GoogleSttServiceImpl implements GoogleSttService {
 
             if (word.isEmpty()) continue;
 
+            // 2: 초(Second) 단위가 아닌 밀리초(ms) 단위로 정밀 계산
             long wordStartTimeMs = toMillis(wordInfo.getStartTime());
             long wordEndTimeMs = toMillis(wordInfo.getEndTime());
             long pauseMs = (lastWordEndTimeMs >= 0) ? (wordStartTimeMs - lastWordEndTimeMs) : 0;
@@ -112,57 +114,52 @@ public class GoogleSttServiceImpl implements GoogleSttService {
             System.out.println(String.format("[단어] 화자:%d | 침묵:%4dms | 시간:%5dms~%5dms | 원본:'%s'",
                     wordInfo.getSpeakerTag(), pauseMs, wordStartTimeMs, wordEndTimeMs, rawWord));
 
+            // 화자 태그가 0으로 들어오면 1로 강제 폴백 보정
             int wordSpeakerTag = wordInfo.getSpeakerTag() > 0 ? wordInfo.getSpeakerTag() : 1;
 
             if (currentSpeakerTag == -1) {
-                currentSpeakerTag = isDiarizationCollapsed ? fallbackSpeaker : wordSpeakerTag;
+                currentSpeakerTag = wordSpeakerTag;
                 startTime = formatTime(wordInfo.getStartTime().getSeconds());
             }
 
-            boolean isSpeakerChanged = (!isDiarizationCollapsed && currentSpeakerTag != wordSpeakerTag);
-            boolean isLongPause = (pauseMs >= 700);
-            boolean isTurnTakingCue = (currentSentence.length() >= 8 && pauseMs >= 300
-                    && word.matches("^(네|아|예|그|저|여보세요).*"));
-            boolean isLengthLimit = (currentSentence.length() >= 50);
+            // 문장 끊는 조건 (화자 변경 / 0.8초 이상 침묵 / 문장이 40자 이상이면서 0.4초 이상 쉼)
+            boolean isSpeakerChanged = (currentSpeakerTag != wordSpeakerTag);
+            boolean isLongPause = (pauseMs >= 800); // 0.8초(800ms)로 조정
+            boolean isMediumPauseOnLongSentence = (currentSentence.length() >= 40 && pauseMs >= 400);
 
-            if (isSpeakerChanged || isLongPause || isTurnTakingCue || isLengthLimit) {
+            // 단어 중간이 아닌 '새 단어 시작점'이거나 화자가 바뀌었을 때 말풍선 분리
+            if (isSpeakerChanged || (isWordStart && (isLongPause || isMediumPauseOnLongSentence))) {
                 if (currentSentence.length() > 0) {
                     transcripts.add(createTranscript(callRecord, currentSpeakerTag, startTime, currentSentence.toString().trim(), orderIndex));
                     orderIndex += 1000;
                     currentSentence.setLength(0);
-
-                    if (isDiarizationCollapsed && (isLongPause || isTurnTakingCue)) {
-                        fallbackSpeaker = (fallbackSpeaker == 1) ? 2 : 1;
-                    }
                 }
-                currentSpeakerTag = isDiarizationCollapsed ? fallbackSpeaker : wordSpeakerTag;
+                currentSpeakerTag = wordSpeakerTag;
                 startTime = formatTime(wordInfo.getStartTime().getSeconds());
-                prevEndedWithConnector = false;
             }
 
-            if (currentSentence.length() > 0) {
-                if (!startsWithUnderscore && !prevEndedWithConnector) {
-                    currentSentence.append(" ");
-                }
+            // 3: 새 단어(▁)일 때만 앞에 공백 추가
+            if (currentSentence.length() > 0 && isWordStart) {
+                currentSentence.append(" ");
             }
             currentSentence.append(word);
-            prevEndedWithConnector = endsWithUnderscore;
+
             lastWordEndTimeMs = wordEndTimeMs;
 
-            if (word.matches(".*[.?!]$")) {
+            // 마침표(. ? !)로 끝나거나, 문장이 길면서(35자 이상) 쉼표(,)로 끝나면 분리
+            boolean isPunctuation = word.matches(".*[.?!]$");
+            boolean isCommaOnLongSentence = (currentSentence.length() >= 35 && word.endsWith(","));
+
+            if (isPunctuation || isCommaOnLongSentence) {
                 transcripts.add(createTranscript(callRecord, currentSpeakerTag, startTime, currentSentence.toString().trim(), orderIndex));
                 orderIndex += 1000;
                 currentSentence.setLength(0);
                 currentSpeakerTag = -1;
-                lastWordEndTimeMs = wordEndTimeMs;
-                prevEndedWithConnector = false;
-
-                if (isDiarizationCollapsed) {
-                    fallbackSpeaker = (fallbackSpeaker == 1) ? 2 : 1;
-                }
+                lastWordEndTimeMs = -1;
             }
         }
 
+        // 마지막 남은 텍스트 저장
         if (currentSentence.length() > 0) {
             transcripts.add(createTranscript(callRecord, currentSpeakerTag, startTime, currentSentence.toString().trim(), orderIndex));
         }
@@ -170,6 +167,7 @@ public class GoogleSttServiceImpl implements GoogleSttService {
         return transcripts;
     }
 
+    // Duration을 밀리초(ms)로 변환하는 헬퍼 메서드
     private long toMillis(Duration duration) {
         return duration.getSeconds() * 1000L + (duration.getNanos() / 1_000_000L);
     }
@@ -189,5 +187,4 @@ public class GoogleSttServiceImpl implements GoogleSttService {
         long seconds = totalSeconds % 60;
         return String.format("%02d:%02d", minutes, seconds);
     }
-
 }
