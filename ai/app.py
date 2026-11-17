@@ -6,7 +6,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
-from config import ADAPTER, API_KEY, API_VERSION, MAX_INPUT, SUMMARY_MAX_NEW, EVENT_DIR, EVENT_KEEP_DAYS, log
+from config import API_KEY, API_VERSION, MAX_INPUT, SUMMARY_MAX_NEW, EVENT_DIR, EVENT_KEEP_DAYS, _adapter_desc, log
 from prompts import SUM, G, F, T
 from events import _REQ, _mkdir700, _purge_events, capture, _check_tail
 from model import S, _cuda_mem, load_model, gen_step
@@ -21,7 +21,7 @@ from summary import check_summary
 
 # 기록에 남길 서버 상태
 def _base_state():
-    st = {"adapter": ADAPTER.split("/")[-1], "api_version": API_VERSION,
+    st = {"adapter": _adapter_desc(), "api_version": API_VERSION,
           "queue": _WAIT["n"], "cuda_mem_alloc": _cuda_mem()}
     try:
         st["gpu_busy"] = GPU_LOCK.locked()
@@ -127,8 +127,10 @@ class FeedbackReq(BaseModel):
 
 
 def _health():
+    desc = _adapter_desc()
     return {"status": "ok" if "model" in S else "loading",
-            "adapter": ADAPTER.split("/")[-1],
+            "adapter": desc["feedback"] if desc["guide"] == desc["feedback"] else f"guide={desc['guide']} feedback={desc['feedback']}",
+            "adapters": desc,                       # 경로별 어댑터
             "auth_required": bool(API_KEY),
             "api_version": API_VERSION}
 
@@ -158,7 +160,7 @@ async def guides(req: GuideReq, request: Request, x_api_key: str | None = Header
         log.warning(f"가이드 4구조 파싱 실패 — 전체를 대본으로 폴백 (out={len(text)}자)")
     st = ctx["state"]
     log.info(f"guide wait={st.get('wait')} gen={st.get('gen')} in={st.get('in')} "
-             f"out={st.get('out')} queue={st.get('queue')}")
+             f"out={st.get('out')} queue={st.get('queue')} adapter={st.get('adapter')} switch={st.get('switch')}")
     await _check_tail(request, ctx)
     return {"guide": guide_text, "script": script, "tips": tips, "elapsed": sec}
 
@@ -231,6 +233,9 @@ async def feedback(req: FeedbackReq, request: Request, x_api_key: str | None = H
                 st["summary_blocked"] = why
                 capture("summary_blocked", 200, ctx["body"], st, model_output=s_raw,
                         extra={"why": why, **info})
+            elif info.get("overclaim") == "unresolved":     # 완료 근거를 규칙으로 못 가림 — 통과시키고 남긴다
+                st["summary_unresolved"] = True
+                capture("summary_unresolved", 200, ctx["body"], st, model_output=s_raw, extra=info)
         except Exception as e:
             summary = ""
             log.exception("요약 검사 실패")
@@ -241,7 +246,7 @@ async def feedback(req: FeedbackReq, request: Request, x_api_key: str | None = H
              f"summary_gen={st.get('summary_gen')} in={st.get('in')} out={st.get('out')} "
              f"todos={len(todos)} summary={len(summary)} blocked={st.get('summary_blocked')} "
              f"turns={st.get('turns')} speakers={spk} max_run={st.get('max_run')} "
-             f"queue={st.get('queue')} gone={st.get('gone_at')}")
+             f"queue={st.get('queue')} gone={st.get('gone_at')} adapter={st.get('adapter')} switch={st.get('switch')}")
     await _check_tail(request, ctx)
     return {"expression": expression, "feedback": fb, **parts,
             "todo_summary": todo_summary(len(todos)), "todos": todos,
